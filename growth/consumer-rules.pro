@@ -1,0 +1,2 @@
+-keepclassmembers class com.gtmeasy.growth.** { *; }
+-keep class com.gtmeasy.growth.** { *; }
