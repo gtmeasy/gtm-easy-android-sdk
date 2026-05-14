@@ -60,9 +60,12 @@ class GrowthAnalytics @JvmOverloads constructor(
             put("timezone", JsonPrimitive(TimeZone.getDefault().id))
             put("traits", traits.toJson())
         }
-        val response = post(body, "/api/v1/growth/users")
+        // Notify bridges BEFORE the network call. Third-party SDKs (Clarity,
+        // PostHog, Sentry, Statsig) keep their own queues; if our ingest fails
+        // we still want them to see the identify so cross-tool sessions stay
+        // joinable.
         notifyBridgesIdentify(effectiveUserId, anonStore.get(), traits)
-        return response
+        return post(body, "/api/v1/growth/users")
     }
 
     suspend fun track(
@@ -88,9 +91,10 @@ class GrowthAnalytics @JvmOverloads constructor(
             metricValue?.let { put("metricValue", JsonPrimitive(it)) }
             metricLabel?.let { put("metricLabel", JsonPrimitive(it)) }
         }
-        val response = post(body, "/api/v1/growth/events")
+        // See identify() — bridges fire before the network post so third-party
+        // SDK queues survive ingest outages.
         notifyBridgesTrack(eventName, properties)
-        return response
+        return post(body, "/api/v1/growth/events")
     }
 
     suspend fun trackFirstOpen() = track("app.first_open")
