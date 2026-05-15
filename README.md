@@ -17,12 +17,21 @@ import com.gtmeasy.growth.GrowthAnalyticsConfiguration
 val analytics = GrowthAnalytics(
     GrowthAnalyticsConfiguration(
         app = "<gtm-easy-app-id>",
-        endpoint = "https://www.gtmeasy.com",
         writeKey = "<per-app-write-key>",
-        environment = GrowthAnalyticsConfiguration.Environment.PRODUCTION,
         context = applicationContext,
     )
 )
+
+// `endpoint` defaults to `GrowthAnalyticsConfiguration.DEFAULT_ENDPOINT`
+// (https://www.gtmeasy.com). Override only for self-hosted deployments or
+// local development:
+//
+// GrowthAnalyticsConfiguration(
+//     app = "<gtm-easy-app-id>",
+//     writeKey = "<per-app-write-key>",
+//     endpoint = "https://your-self-hosted.example.com",
+//     environment = GrowthAnalyticsConfiguration.Environment.DEVELOPMENT,
+// )
 
 lifecycleScope.launch {
     analytics.identify(userId = "user_123", traits = mapOf("plan" to "pro"))

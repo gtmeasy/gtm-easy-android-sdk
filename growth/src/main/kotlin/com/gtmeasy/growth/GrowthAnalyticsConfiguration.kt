@@ -11,8 +11,12 @@ import android.content.Context
  */
 data class GrowthAnalyticsConfiguration(
     val app: String,
-    val endpoint: String,
     val writeKey: String,
+    /**
+     * Production ingest host. Override only when running against a self-hosted
+     * GTM Easy deployment or a local development server.
+     */
+    val endpoint: String = DEFAULT_ENDPOINT,
     val environment: Environment = Environment.PRODUCTION,
     val context: Context? = null,
     /** Override the User-Agent header sent on ingest. */
@@ -32,4 +36,32 @@ data class GrowthAnalyticsConfiguration(
         require(writeKey.isNotBlank()) { "writeKey must not be blank" }
         require(timeoutMs in 1_000..60_000) { "timeoutMs must be between 1s and 60s" }
     }
+
+    companion object {
+        const val DEFAULT_ENDPOINT: String = "https://www.gtmeasy.com"
+    }
 }
+
+/**
+ * Source-compatible factory for callers that previously passed `endpoint` as the
+ * second positional parameter. New code should construct
+ * [GrowthAnalyticsConfiguration] directly and omit `endpoint` to pick up
+ * [GrowthAnalyticsConfiguration.DEFAULT_ENDPOINT].
+ */
+@Deprecated(
+    message = "Use GrowthAnalyticsConfiguration(app, writeKey, endpoint = …) — endpoint now defaults to DEFAULT_ENDPOINT.",
+    replaceWith = ReplaceWith("GrowthAnalyticsConfiguration(app = app, writeKey = writeKey, endpoint = endpoint, environment = environment, context = context)"),
+)
+fun GrowthAnalyticsConfiguration(
+    app: String,
+    endpoint: String,
+    writeKey: String,
+    environment: GrowthAnalyticsConfiguration.Environment = GrowthAnalyticsConfiguration.Environment.PRODUCTION,
+    context: android.content.Context? = null,
+): GrowthAnalyticsConfiguration = GrowthAnalyticsConfiguration(
+    app = app,
+    writeKey = writeKey,
+    endpoint = endpoint,
+    environment = environment,
+    context = context,
+)

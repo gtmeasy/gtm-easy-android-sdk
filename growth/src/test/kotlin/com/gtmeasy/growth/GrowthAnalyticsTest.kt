@@ -32,6 +32,12 @@ class GrowthAnalyticsTest {
         environment = GrowthAnalyticsConfiguration.Environment.STAGING,
     )
 
+    @Test fun `configuration defaults endpoint to production`() {
+        val config = GrowthAnalyticsConfiguration(app = "test-app", writeKey = "gte_test")
+        assertEquals("https://www.gtmeasy.com", config.endpoint)
+        assertEquals(GrowthAnalyticsConfiguration.DEFAULT_ENDPOINT, config.endpoint)
+    }
+
     @Test fun `track posts to events endpoint with auth header`() = runTest {
         val client = RecordingHttpClient()
         val analytics = GrowthAnalytics(configuration, client, FixedAnonymousIdStore("anon_1"))
