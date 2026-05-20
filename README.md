@@ -15,7 +15,6 @@ implementation("com.gtmeasy:growth:0.2.0")
 - **Click ID store**: `GrowthClickIdStore(context)` persists every ad-platform click ID with 90-day TTL, synthesizes Meta `_fbc`/`_fbp`, accepts `captureClickIds(uri)` for deep-link parsing.
 - **Typed paywall events**: extension functions like `analytics.trackPaywallOpened(placement, variant, productIds)`.
 - **Debug mirror**: `GrowthAnalyticsConfiguration(debug = true)` emits to `GrowthDebugSink.events` SharedFlow + logcat.
-- **Generated low-level client**: `com.gtmeasy.growth.api.*` — typed OkHttp client auto-generated from the OpenAPI spec; the high-level `GrowthAnalytics` wraps it.
 
 ## Quick start
 

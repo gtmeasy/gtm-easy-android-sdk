@@ -4,7 +4,7 @@ import android.content.Context
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
-internal interface AnonymousIdStore {
+interface AnonymousIdStore {
     fun get(): String
 }
 

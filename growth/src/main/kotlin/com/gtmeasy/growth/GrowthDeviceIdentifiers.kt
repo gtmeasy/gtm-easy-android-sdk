@@ -31,9 +31,9 @@ class GrowthDeviceIdentifiers(private val context: Context?) {
         return DeviceSnapshot(
             gaid = effectiveGaid,
             limitAdTracking = limitAdTracking,
-            androidVersion = android.os.Build.VERSION.RELEASE,
-            manufacturer = android.os.Build.MANUFACTURER,
-            model = android.os.Build.MODEL,
+            androidVersion = android.os.Build.VERSION.RELEASE ?: "",
+            manufacturer = android.os.Build.MANUFACTURER ?: "",
+            model = android.os.Build.MODEL ?: "",
         )
     }
 

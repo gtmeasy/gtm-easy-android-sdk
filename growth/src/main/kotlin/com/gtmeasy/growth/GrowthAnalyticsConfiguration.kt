@@ -48,26 +48,3 @@ data class GrowthAnalyticsConfiguration(
     }
 }
 
-/**
- * Source-compatible factory for callers that previously passed `endpoint` as the
- * second positional parameter. New code should construct
- * [GrowthAnalyticsConfiguration] directly and omit `endpoint` to pick up
- * [GrowthAnalyticsConfiguration.DEFAULT_ENDPOINT].
- */
-@Deprecated(
-    message = "Use GrowthAnalyticsConfiguration(app, writeKey, endpoint = …) — endpoint now defaults to DEFAULT_ENDPOINT.",
-    replaceWith = ReplaceWith("GrowthAnalyticsConfiguration(app = app, writeKey = writeKey, endpoint = endpoint, environment = environment, context = context)"),
-)
-fun GrowthAnalyticsConfiguration(
-    app: String,
-    endpoint: String,
-    writeKey: String,
-    environment: GrowthAnalyticsConfiguration.Environment = GrowthAnalyticsConfiguration.Environment.PRODUCTION,
-    context: android.content.Context? = null,
-): GrowthAnalyticsConfiguration = GrowthAnalyticsConfiguration(
-    app = app,
-    writeKey = writeKey,
-    endpoint = endpoint,
-    environment = environment,
-    context = context,
-)
