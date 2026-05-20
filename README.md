@@ -1,12 +1,21 @@
 # GTM Easy Android SDK
 
-First-party Kotlin SDK for [GTM Easy](https://gtmeasy.com) growth analytics. Sends events to the GTM Easy ingestion API, identifies users, persists an anonymous ID, collects Google Play Install Referrer attribution, and bridges a single user across the other analytics tools you already use (Microsoft Clarity, PostHog, Sentry incl. self-hosted, Statsig).
+First-party Kotlin SDK for [GTM Easy](https://gtmeasy.com) growth analytics, native attribution, and ad-platform conversion APIs. Sends events to the GTM Easy ingestion API, identifies users, persists an anonymous ID, captures GAID + click IDs, drives the paywall funnel, collects Google Play Install Referrer attribution, and bridges a single user across the other analytics tools you already use (Microsoft Clarity, PostHog, Sentry incl. self-hosted, Statsig).
 
 Targets: **Android 6.0 (API 23)+** and **JVM 11+** for backend / server use.
 
 ```kotlin
-implementation("com.gtmeasy:growth:0.1.0")
+implementation("com.gtmeasy:growth:0.2.0")
 ```
+
+## What's new (v0.2.0)
+
+- **Lifecycle observer**: `GrowthLifecycleObserver(analytics, context).register()` fires `app.first_open` once + `app.opened` on every foreground.
+- **Device identifiers**: `GrowthDeviceIdentifiers(context).snapshot()` reads GAID via reflection (no hard dep on `play-services-ads-identifier`) with a 1s timeout.
+- **Click ID store**: `GrowthClickIdStore(context)` persists every ad-platform click ID with 90-day TTL, synthesizes Meta `_fbc`/`_fbp`, accepts `captureClickIds(uri)` for deep-link parsing.
+- **Typed paywall events**: extension functions like `analytics.trackPaywallOpened(placement, variant, productIds)`.
+- **Debug mirror**: `GrowthAnalyticsConfiguration(debug = true)` emits to `GrowthDebugSink.events` SharedFlow + logcat.
+- **Generated low-level client**: `com.gtmeasy.growth.api.*` — typed OkHttp client auto-generated from the OpenAPI spec; the high-level `GrowthAnalytics` wraps it.
 
 ## Quick start
 

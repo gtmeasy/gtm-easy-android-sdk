@@ -32,22 +32,39 @@ class GrowthAnalytics @JvmOverloads constructor(
     private val configuration: GrowthAnalyticsConfiguration,
     httpClient: GrowthHttpClient? = null,
     anonymousIdStore: AnonymousIdStore? = null,
+    deviceIdentifiers: GrowthDeviceIdentifiers? = null,
+    clickIdStore: GrowthClickIdStore? = null,
 ) {
     private val http: GrowthHttpClient = httpClient ?: UrlConnectionHttpClient(configuration.timeoutMs)
     private val anonStore: AnonymousIdStore = anonymousIdStore ?: configuration.context
         ?.let { SharedPrefsAnonymousIdStore(it) }
         ?: InMemoryAnonymousIdStore()
+    private val deviceIds: GrowthDeviceIdentifiers = deviceIdentifiers ?: GrowthDeviceIdentifiers(configuration.context)
+    private val clickIds: GrowthClickIdStore = clickIdStore ?: GrowthClickIdStore(configuration.context)
     private val mutex = Mutex()
     private val json = Json { encodeDefaults = false; explicitNulls = false }
     private var userId: String? = null
 
     val bridges: MutableList<GrowthBridge> = CopyOnWriteArrayList()
 
+    /** Force-set the userId without emitting an identify event. */
+    fun setUserId(id: String?) {
+        userId = id
+    }
+
+    fun getUserId(): String? = userId
+
+    suspend fun getAnonymousId(): String = anonStore.get()
+
+    /** Direct accessor for click-id capture from deep links. */
+    val clickIdStore: GrowthClickIdStore get() = clickIds
+
     suspend fun identify(userId: String? = null, traits: Map<String, Any?> = emptyMap()): IngestResponse {
         val effectiveUserId = mutex.withLock {
             if (userId != null) this.userId = userId
             this.userId
         }
+        val enrichedTraits = traits + mapOf("_ctx" to commonContext())
         val body = buildJsonObject {
             put("app", JsonPrimitive(configuration.app))
             put("environment", JsonPrimitive(configuration.environment.wire))
@@ -58,12 +75,13 @@ class GrowthAnalytics @JvmOverloads constructor(
             putNullable("buildNumber", buildNumber())
             put("locale", JsonPrimitive(Locale.getDefault().toLanguageTag()))
             put("timezone", JsonPrimitive(TimeZone.getDefault().id))
-            put("traits", traits.toJson())
+            put("traits", enrichedTraits.toJson())
         }
-        // Notify bridges BEFORE the network call. Third-party SDKs (Clarity,
-        // PostHog, Sentry, Statsig) keep their own queues; if our ingest fails
-        // we still want them to see the identify so cross-tool sessions stay
-        // joinable.
+        if (configuration.debug) {
+            GrowthDebugSink.record(
+                GrowthDebugSink.DebugEvent(GrowthDebugSink.Kind.IDENTIFY, effectiveUserId ?: "<anonymous>", enrichedTraits)
+            )
+        }
         notifyBridgesIdentify(effectiveUserId, anonStore.get(), traits)
         return post(body, "/api/v1/growth/users")
     }
@@ -74,6 +92,7 @@ class GrowthAnalytics @JvmOverloads constructor(
         metricValue: Double? = null,
         metricLabel: String? = null,
     ): IngestResponse {
+        val enrichedProperties = properties + mapOf("_ctx" to commonContext())
         val body = buildJsonObject {
             put("app", JsonPrimitive(configuration.app))
             put("environment", JsonPrimitive(configuration.environment.wire))
@@ -87,14 +106,32 @@ class GrowthAnalytics @JvmOverloads constructor(
             put("locale", JsonPrimitive(Locale.getDefault().toLanguageTag()))
             put("timezone", JsonPrimitive(TimeZone.getDefault().id))
             put("occurredAt", JsonPrimitive(iso8601Now()))
-            put("properties", properties.toJson())
+            put("properties", enrichedProperties.toJson())
             metricValue?.let { put("metricValue", JsonPrimitive(it)) }
             metricLabel?.let { put("metricLabel", JsonPrimitive(it)) }
         }
-        // See identify() — bridges fire before the network post so third-party
-        // SDK queues survive ingest outages.
+        if (configuration.debug) {
+            GrowthDebugSink.record(
+                GrowthDebugSink.DebugEvent(GrowthDebugSink.Kind.TRACK, eventName, enrichedProperties)
+            )
+        }
         notifyBridgesTrack(eventName, properties)
         return post(body, "/api/v1/growth/events")
+    }
+
+    /** Common context attached to every event under `properties._ctx`. */
+    private suspend fun commonContext(): Map<String, Any?> {
+        val ctx = mutableMapOf<String, Any?>()
+        val device = deviceIds.snapshot()
+        ctx.putAll(device.asProperties())
+        ctx.putAll(clickIds.snapshot())
+        ctx["sdk"] = "gtm-easy-kotlin"
+        ctx["sdk_version"] = SDK_VERSION
+        return ctx
+    }
+
+    companion object {
+        const val SDK_VERSION = "0.2.0"
     }
 
     suspend fun trackFirstOpen() = track("app.first_open")
