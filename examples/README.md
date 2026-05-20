@@ -55,7 +55,7 @@ then ▶ Run against any API 23+ emulator.
 
 ```bash
 cd packages/growth-kotlin-sdk/examples/TwilarSample
-gradle :app:installDebug
+./gradlew :app:installDebug
 adb shell am start -n com.gtmeasy.twilarsample/.MainActivity
 ```
 
