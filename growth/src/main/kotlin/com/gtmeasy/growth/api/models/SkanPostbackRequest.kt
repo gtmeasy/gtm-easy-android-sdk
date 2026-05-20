@@ -40,6 +40,7 @@ import kotlinx.serialization.Contextual
  * @param sourceIdentifier 
  * @param redownload 
  * @param sourceAppId 
+ * @param sourceDomain 
  * @param fidelityType 
  * @param conversionValue 
  * @param coarseConversionValue 
@@ -76,6 +77,9 @@ data class SkanPostbackRequest (
 
     @SerialName(value = "source-app-id")
     val sourceAppId: kotlin.Int? = null,
+
+    @SerialName(value = "source-domain")
+    val sourceDomain: kotlin.String? = null,
 
     @SerialName(value = "fidelity-type")
     val fidelityType: kotlin.Int? = null,

@@ -22,9 +22,15 @@ class GrowthDeviceIdentifiers(private val context: Context?) {
 
     suspend fun snapshot(): DeviceSnapshot {
         val gaid = readGaidWithTimeout()
+        val limitAdTracking = gaid?.limitAdTracking ?: true
+        // CRITICAL: suppress GAID when limit-ad-tracking is on. Some Play
+        // Services builds still return the real id even after the user opts
+        // out — propagating that downstream (e.g. Meta CAPI `madid`) would
+        // violate the user's privacy choice + Google's policy.
+        val effectiveGaid = if (limitAdTracking) null else gaid?.id
         return DeviceSnapshot(
-            gaid = gaid?.id,
-            limitAdTracking = gaid?.limitAdTracking ?: true,
+            gaid = effectiveGaid,
+            limitAdTracking = limitAdTracking,
             androidVersion = android.os.Build.VERSION.RELEASE,
             manufacturer = android.os.Build.MANUFACTURER,
             model = android.os.Build.MODEL,

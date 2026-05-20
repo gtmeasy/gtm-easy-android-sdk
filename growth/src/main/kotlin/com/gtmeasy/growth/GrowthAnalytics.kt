@@ -43,7 +43,10 @@ class GrowthAnalytics @JvmOverloads constructor(
     private val clickIds: GrowthClickIdStore = clickIdStore ?: GrowthClickIdStore(configuration.context)
     private val mutex = Mutex()
     private val json = Json { encodeDefaults = false; explicitNulls = false }
-    private var userId: String? = null
+    // @Volatile ensures cross-thread publication; setUserId / getUserId touch
+    // this on arbitrary coroutine dispatchers, and the suspend functions read
+    // it without the mutex when building event bodies.
+    @Volatile private var userId: String? = null
 
     val bridges: MutableList<GrowthBridge> = CopyOnWriteArrayList()
 

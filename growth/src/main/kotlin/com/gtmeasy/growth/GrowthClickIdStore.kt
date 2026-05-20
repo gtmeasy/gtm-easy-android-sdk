@@ -17,7 +17,10 @@ import kotlin.random.Random
 class GrowthClickIdStore(context: Context?) {
 
     private val prefs: SharedPreferences? = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    private val memory = mutableMapOf<String, Pair<String, Long>>()
+    // The fallback in-memory map is used on JVM / when callers pass a null
+    // Context. Multi-coroutine writes (e.g. burst capture from a deep link
+    // handler + concurrent track()) require thread-safe storage.
+    private val memory = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
 
     fun record(provider: GrowthClickProvider, value: String, at: Long = System.currentTimeMillis()) {
         val trimmed = value.trim()
