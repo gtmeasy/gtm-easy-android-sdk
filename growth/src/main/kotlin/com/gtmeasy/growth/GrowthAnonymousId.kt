@@ -2,18 +2,40 @@ package com.gtmeasy.growth
 
 import android.content.Context
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 
 internal interface AnonymousIdStore {
     fun get(): String
 }
 
+/**
+ * Atomic first-init for the persisted anonymous id. Without this, two
+ * concurrent first calls from different threads (e.g. lifecycle observer +
+ * an in-flight track call) can both miss the persisted value, generate
+ * different UUIDs, and split a session into two identities. The cached
+ * AtomicReference ensures every caller observes the same id once any thread
+ * has resolved it; `commit()` (synchronous) is used instead of `apply()` so
+ * the persisted value is durable before any second caller can read.
+ */
 internal class SharedPrefsAnonymousIdStore(context: Context) : AnonymousIdStore {
     private val prefs = context.applicationContext.getSharedPreferences("gtm_easy_growth", Context.MODE_PRIVATE)
+    private val cached = AtomicReference<String?>(prefs.getString(KEY, null))
+    private val lock = Any()
+
     override fun get(): String {
-        prefs.getString(KEY, null)?.let { return it }
-        val fresh = UUID.randomUUID().toString().lowercase()
-        prefs.edit().putString(KEY, fresh).apply()
-        return fresh
+        cached.get()?.let { return it }
+        return synchronized(lock) {
+            cached.get()?.let { return@synchronized it }
+            val persisted = prefs.getString(KEY, null)
+            if (persisted != null) {
+                cached.set(persisted)
+                return@synchronized persisted
+            }
+            val fresh = UUID.randomUUID().toString().lowercase()
+            prefs.edit().putString(KEY, fresh).commit()
+            cached.set(fresh)
+            fresh
+        }
     }
     private companion object { const val KEY = "anonymous_id" }
 }

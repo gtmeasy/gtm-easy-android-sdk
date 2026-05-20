@@ -21,6 +21,10 @@ class GrowthClickIdStore(context: Context?) {
     // Context. Multi-coroutine writes (e.g. burst capture from a deep link
     // handler + concurrent track()) require thread-safe storage.
     private val memory = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+    // Guards the read-generate-persist sequence for `_fbp`. Without this,
+    // concurrent first calls can each miss the persisted value and write
+    // different fb.1.* strings, splitting Meta's identity match.
+    private val fbpLock = Any()
 
     fun record(provider: GrowthClickProvider, value: String, at: Long = System.currentTimeMillis()) {
         val trimmed = value.trim()
@@ -61,10 +65,13 @@ class GrowthClickIdStore(context: Context?) {
      */
     fun ensureFbp(now: Long = System.currentTimeMillis()): String {
         current(GrowthClickProvider.FBP, ttlMs = Long.MAX_VALUE, now = now)?.let { return it }
-        val rand = Random.Default.nextLong(1_000_000_000L, Long.MAX_VALUE)
-        val value = "fb.1.$now.$rand"
-        record(GrowthClickProvider.FBP, value, now)
-        return value
+        return synchronized(fbpLock) {
+            current(GrowthClickProvider.FBP, ttlMs = Long.MAX_VALUE, now = now)?.let { return@synchronized it }
+            val rand = Random.Default.nextLong(1_000_000_000L, Long.MAX_VALUE)
+            val value = "fb.1.$now.$rand"
+            record(GrowthClickProvider.FBP, value, now)
+            value
+        }
     }
 
     /**
