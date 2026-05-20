@@ -21,8 +21,10 @@ object GrowthClient {
     /** Write key from `gtmeasy.com → Settings → Write Keys`. Replace before shipping. */
     const val WRITE_KEY = "wk_sample_replace_me"
 
-    /** LAN staging from `apps/web/docker-compose.staging.yml`. */
-    const val ENDPOINT = "http://192.168.3.241:3000"
+    /** Production by default. To dogfood against the LAN staging host
+     * (`http://192.168.3.241:3000`) point this at the LAN IP AND keep
+     * `android:usesCleartextTraffic="true"` in the manifest. */
+    const val ENDPOINT = "https://www.gtmeasy.com"
 
     @Volatile private var instance: GrowthAnalytics? = null
 

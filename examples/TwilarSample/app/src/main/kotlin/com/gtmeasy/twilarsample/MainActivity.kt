@@ -7,19 +7,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import com.gtmeasy.twilarsample.growth.GrowthClient
 import com.gtmeasy.twilarsample.ui.TwilarSampleScreen
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // If the activity was launched from a deep link, capture any click ids
-        // before we render so the next event already has _ctx populated.
+        // Capture inbound deep-link click ids BEFORE rendering so the very
+        // first event fired by the UI already has them in _ctx. The
+        // SharedPreferences-backed store writes synchronously (apply() is
+        // async but the in-memory map is updated immediately), so calling
+        // captureClickIds on the main thread is safe and avoids a race
+        // with synchronous tracking calls fired during composition.
         captureClickIdsFromIntent(intent)
         setContent { TwilarSampleScreen() }
     }
@@ -31,8 +29,6 @@ class MainActivity : ComponentActivity() {
 
     private fun captureClickIdsFromIntent(intent: Intent?) {
         val data: Uri = intent?.data ?: return
-        ioScope.launch {
-            GrowthClient.require().clickIdStore.captureClickIds(data)
-        }
+        GrowthClient.require().clickIdStore.captureClickIds(data)
     }
 }
