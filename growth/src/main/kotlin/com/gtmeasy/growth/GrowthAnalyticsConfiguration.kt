@@ -23,6 +23,12 @@ data class GrowthAnalyticsConfiguration(
     val userAgent: String? = null,
     /** HTTP connect + read timeout in milliseconds. */
     val timeoutMs: Long = 10_000,
+    /**
+     * When true, every identify / track is mirrored to [GrowthDebugSink]
+     * before the network call. Subscribe to [GrowthDebugSink.events] from a
+     * debug UI for a live feed.
+     */
+    val debug: Boolean = false,
 ) {
     enum class Environment(val wire: String) {
         PRODUCTION("production"),
