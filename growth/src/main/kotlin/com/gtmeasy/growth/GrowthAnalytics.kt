@@ -34,6 +34,7 @@ class GrowthAnalytics @JvmOverloads constructor(
     anonymousIdStore: AnonymousIdStore? = null,
     deviceIdentifiers: GrowthDeviceIdentifiers? = null,
     clickIdStore: GrowthClickIdStore? = null,
+    identityStore: IdentityStore? = null,
 ) {
     private val http: GrowthHttpClient = httpClient ?: UrlConnectionHttpClient(configuration.timeoutMs)
     private val anonStore: AnonymousIdStore = anonymousIdStore ?: configuration.context
@@ -41,38 +42,91 @@ class GrowthAnalytics @JvmOverloads constructor(
         ?: InMemoryAnonymousIdStore()
     private val deviceIds: GrowthDeviceIdentifiers = deviceIdentifiers ?: GrowthDeviceIdentifiers(configuration.context)
     private val clickIds: GrowthClickIdStore = clickIdStore ?: GrowthClickIdStore(configuration.context)
+    private val identityStore: IdentityStore = identityStore ?: configuration.context
+        ?.let { SharedPrefsIdentityStore(it) }
+        ?: InMemoryIdentityStore()
     private val mutex = Mutex()
     private val json = Json { encodeDefaults = false; explicitNulls = false }
     // @Volatile ensures cross-thread publication; setUserId / getUserId touch
-    // this on arbitrary coroutine dispatchers, and the suspend functions read
-    // it without the mutex when building event bodies.
-    @Volatile private var userId: String? = null
+    // these on arbitrary coroutine dispatchers, and the suspend functions read
+    // them without the mutex when building event bodies. Hydrated from the
+    // durable identity store at construction so identity survives process death.
+    @Volatile private var userId: String? = this.identityStore.get(IdentityStore.KEY_USER_ID)
+    @Volatile private var username: String? = this.identityStore.get(IdentityStore.KEY_USERNAME)
+    @Volatile private var email: String? = this.identityStore.get(IdentityStore.KEY_EMAIL)
 
     val bridges: MutableList<GrowthBridge> = CopyOnWriteArrayList()
 
-    /** Force-set the userId without emitting an identify event. */
+    /** Force-set the userId without emitting an identify event. Persisted durably. */
     fun setUserId(id: String?) {
         userId = id
+        identityStore.set(IdentityStore.KEY_USER_ID, id)
     }
 
     fun getUserId(): String? = userId
+
+    fun getUsername(): String? = username
+
+    fun getEmail(): String? = email
 
     suspend fun getAnonymousId(): String = anonStore.get()
 
     /** Direct accessor for click-id capture from deep links. */
     val clickIdStore: GrowthClickIdStore get() = clickIds
 
-    suspend fun identify(userId: String? = null, traits: Map<String, Any?> = emptyMap()): IngestResponse {
-        val effectiveUserId = mutex.withLock {
+    /**
+     * Clear the identified user (logout): forget the persisted userId/username/
+     * email, rotate the anonymous id, and notify bridges to clear their own
+     * identity. Subsequent events start a fresh anonymous stream.
+     */
+    suspend fun reset() {
+        // Rotate the anon id and clear identity together under the one lock that
+        // identify()/track() snapshot under, so no concurrent call can observe a
+        // torn pair (cleared user + old anon, or old user + rotated anon) and
+        // re-stitch a logout-period event onto the previous user.
+        mutex.withLock {
+            anonStore.rotate()
+            userId = null
+            username = null
+            email = null
+            identityStore.set(IdentityStore.KEY_USER_ID, null)
+            identityStore.set(IdentityStore.KEY_USERNAME, null)
+            identityStore.set(IdentityStore.KEY_EMAIL, null)
+        }
+        for (bridge in bridges) runCatching { bridge.onReset() }
+    }
+
+    /**
+     * Identify the current user. `username` and `email` are first-class (not
+     * smuggled in `traits`); they sit after `traits` to keep the legacy positional
+     * call `identify("u", mapOf(...))` source-compatible. Pass `null` (the default)
+     * to leave a field unchanged; use [reset] to clear identity. All three persist.
+     */
+    suspend fun identify(
+        userId: String? = null,
+        traits: Map<String, Any?> = emptyMap(),
+        username: String? = null,
+        email: String? = null,
+    ): IngestResponse {
+        // Mutate + snapshot identity AND the anon id under one lock so the values
+        // we send (and link) can't be torn by a concurrent reset()/track().
+        val snap = mutex.withLock {
             if (userId != null) this.userId = userId
-            this.userId
+            if (username != null) this.username = normalizeIdentity(username)
+            if (email != null) this.email = normalizeIdentity(email)
+            identityStore.set(IdentityStore.KEY_USER_ID, this.userId)
+            identityStore.set(IdentityStore.KEY_USERNAME, this.username)
+            identityStore.set(IdentityStore.KEY_EMAIL, this.email)
+            IdentitySnapshot(this.userId, this.username, this.email, anonStore.get())
         }
         val enrichedTraits = traits + mapOf("_ctx" to commonContext())
         val body = buildJsonObject {
             put("app", JsonPrimitive(configuration.app))
             put("environment", JsonPrimitive(configuration.environment.wire))
-            putNullable("userId", effectiveUserId)
-            put("anonymousId", JsonPrimitive(anonStore.get()))
+            putNullable("userId", snap.userId)
+            put("anonymousId", JsonPrimitive(snap.anonymousId))
+            putNullable("username", snap.username)
+            putNullable("email", snap.email)
             put("platform", JsonPrimitive(detectPlatform()))
             putNullable("appVersion", appVersion())
             putNullable("buildNumber", buildNumber())
@@ -82,10 +136,10 @@ class GrowthAnalytics @JvmOverloads constructor(
         }
         if (configuration.debug) {
             GrowthDebugSink.record(
-                GrowthDebugSink.DebugEvent(GrowthDebugSink.Kind.IDENTIFY, effectiveUserId ?: "<anonymous>", enrichedTraits)
+                GrowthDebugSink.DebugEvent(GrowthDebugSink.Kind.IDENTIFY, snap.userId ?: snap.username ?: snap.email ?: "<anonymous>", enrichedTraits)
             )
         }
-        notifyBridgesIdentify(effectiveUserId, anonStore.get(), traits)
+        notifyBridgesIdentify(snap.userId, snap.anonymousId, snap.username, snap.email, traits)
         return post(body, "/api/v1/growth/users")
     }
 
@@ -96,11 +150,15 @@ class GrowthAnalytics @JvmOverloads constructor(
         metricLabel: String? = null,
     ): IngestResponse {
         val enrichedProperties = properties + mapOf("_ctx" to commonContext())
+        // Snapshot userId + anon id atomically under the same lock identify()/reset()
+        // use, so a concurrent reset() can't pair a cleared user with the old anon id
+        // (or the old user with the rotated anon id).
+        val (snapUserId, snapAnon) = mutex.withLock { userId to anonStore.get() }
         val body = buildJsonObject {
             put("app", JsonPrimitive(configuration.app))
             put("environment", JsonPrimitive(configuration.environment.wire))
-            putNullable("userId", userId)
-            put("anonymousId", JsonPrimitive(anonStore.get()))
+            putNullable("userId", snapUserId)
+            put("anonymousId", JsonPrimitive(snapAnon))
             put("eventName", JsonPrimitive(eventName))
             put("platform", JsonPrimitive(detectPlatform()))
             putNullable("appVersion", appVersion())
@@ -118,7 +176,7 @@ class GrowthAnalytics @JvmOverloads constructor(
                 GrowthDebugSink.DebugEvent(GrowthDebugSink.Kind.TRACK, eventName, enrichedProperties)
             )
         }
-        notifyBridgesTrack(eventName, properties)
+        notifyBridgesTrack(eventName, properties, snapUserId, snapAnon)
         return post(body, "/api/v1/growth/events")
     }
 
@@ -134,7 +192,7 @@ class GrowthAnalytics @JvmOverloads constructor(
     }
 
     companion object {
-        const val SDK_VERSION = "0.2.0"
+        const val SDK_VERSION = "0.3.0"
     }
 
     suspend fun trackFirstOpen() = track("app.first_open")
@@ -157,11 +215,12 @@ class GrowthAnalytics @JvmOverloads constructor(
      * resolves UTM and campaign metadata and stores the parsed result.
      */
     suspend fun submitPlayInstallReferrer(referrer: String): IngestResponse {
+        val (snapUserId, snapAnon) = mutex.withLock { userId to anonStore.get() }
         val body = buildJsonObject {
             put("app", JsonPrimitive(configuration.app))
             put("environment", JsonPrimitive(configuration.environment.wire))
-            putNullable("userId", userId)
-            put("anonymousId", JsonPrimitive(anonStore.get()))
+            putNullable("userId", snapUserId)
+            put("anonymousId", JsonPrimitive(snapAnon))
             put("platform", JsonPrimitive("android"))
             put("source", JsonPrimitive("native"))
             put("occurredAt", JsonPrimitive(iso8601Now()))
@@ -188,15 +247,26 @@ class GrowthAnalytics @JvmOverloads constructor(
         return IngestResponse(eventId, eventName)
     }
 
-    private fun notifyBridgesIdentify(userId: String?, anonymousId: String, traits: Map<String, Any?>) {
-        for (bridge in bridges) runCatching { bridge.onIdentify(userId, anonymousId, traits) }
+    private fun notifyBridgesIdentify(userId: String?, anonymousId: String, username: String?, email: String?, traits: Map<String, Any?>) {
+        for (bridge in bridges) runCatching { bridge.onIdentify(userId, anonymousId, username, email, traits) }
     }
 
-    private fun notifyBridgesTrack(eventName: String, properties: Map<String, Any?>) {
+    /** Trim an identity field; collapse empty / whitespace-only input to null. */
+    private fun normalizeIdentity(value: String): String? = value.trim().ifEmpty { null }
+
+    private fun notifyBridgesTrack(eventName: String, properties: Map<String, Any?>, userId: String?, anonymousId: String) {
         for (bridge in bridges) runCatching {
-            bridge.onTrack(eventName, properties, userId, anonStore.get())
+            bridge.onTrack(eventName, properties, userId, anonymousId)
         }
     }
+
+    /** Atomic snapshot of identity + anon id, captured under the mutex. */
+    private data class IdentitySnapshot(
+        val userId: String?,
+        val username: String?,
+        val email: String?,
+        val anonymousId: String,
+    )
 
     private fun detectPlatform(): String = if (configuration.context != null) "android" else "server"
 

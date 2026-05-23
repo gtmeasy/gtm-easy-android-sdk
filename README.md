@@ -48,6 +48,36 @@ lifecycleScope.launch {
 }
 ```
 
+## Identifying users
+
+`identify` attaches a stable **userId** plus optional **username** and **email** to
+the current anonymous stream. All three are first-class (not smuggled in `traits`),
+persisted to `SharedPreferences`, and reused automatically on later `track` calls — so
+a purchase after a process restart still attributes to the signed-in user. On the
+server these power the People dashboard and feed hashed ad-platform match keys (email
+is hashed only at ad-platform egress; plaintext at rest).
+
+```kotlin
+lifecycleScope.launch {
+    analytics.identify(
+        userId = "user_123",
+        username = "john_wayne",
+        email = "john@example.com",
+        traits = mapOf("plan" to "pro"),
+    )
+}
+```
+
+`username` and `email` sit after `traits`, so the legacy positional call
+`identify("user_123", mapOf(...))` keeps working unchanged — pass the new fields by
+name. On logout, call `reset()` to forget the identity and rotate the anonymous id so
+later events start a fresh anonymous stream instead of re-stitching onto the previous
+user:
+
+```kotlin
+lifecycleScope.launch { analytics.reset() }
+```
+
 ## Bridges — one user, all your tools
 
 GTM Easy does not bundle Clarity / PostHog / Sentry / Statsig — you keep your existing SDKs. Install a bridge to make sure the **same user** shows up in each of them.

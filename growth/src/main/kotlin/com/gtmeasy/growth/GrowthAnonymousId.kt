@@ -6,6 +6,14 @@ import java.util.concurrent.atomic.AtomicReference
 
 interface AnonymousIdStore {
     fun get(): String
+
+    /**
+     * Rotate to a fresh anonymous id (logout / [GrowthAnalytics.reset]) so events
+     * emitted afterwards start a new anonymous stream instead of re-stitching onto
+     * the previous user. The default no-ops (returns the current id) so custom
+     * stores stay source-compatible.
+     */
+    fun rotate(): String = get()
 }
 
 /**
@@ -37,10 +45,21 @@ internal class SharedPrefsAnonymousIdStore(context: Context) : AnonymousIdStore 
             fresh
         }
     }
+
+    override fun rotate(): String = synchronized(lock) {
+        val fresh = UUID.randomUUID().toString().lowercase()
+        prefs.edit().putString(KEY, fresh).commit()
+        cached.set(fresh)
+        fresh
+    }
     private companion object { const val KEY = "anonymous_id" }
 }
 
 internal class InMemoryAnonymousIdStore : AnonymousIdStore {
-    private val value = UUID.randomUUID().toString().lowercase()
+    @Volatile private var value = UUID.randomUUID().toString().lowercase()
     override fun get(): String = value
+    override fun rotate(): String {
+        value = UUID.randomUUID().toString().lowercase()
+        return value
+    }
 }

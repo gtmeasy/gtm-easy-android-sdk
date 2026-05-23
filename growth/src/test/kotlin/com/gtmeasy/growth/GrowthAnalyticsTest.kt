@@ -20,8 +20,14 @@ private class RecordingHttpClient(private val response: GrowthHttpResponse = Gro
     }
 }
 
-private class FixedAnonymousIdStore(private val id: String) : AnonymousIdStore {
+private class FixedAnonymousIdStore(private var id: String) : AnonymousIdStore {
+    var rotated = false
     override fun get(): String = id
+    override fun rotate(): String {
+        rotated = true
+        id = "anon_rotated"
+        return id
+    }
 }
 
 class GrowthAnalyticsTest {
@@ -67,6 +73,45 @@ class GrowthAnalyticsTest {
         val trackBody = Json.parseToJsonElement(client.calls[1].third).jsonObject
         assertEquals("user_123", identifyBody.stringField("userId"))
         assertEquals("user_123", trackBody.stringField("userId"))
+    }
+
+    @Test fun `identify sends first-class username and email`() = runTest {
+        val client = RecordingHttpClient()
+        val analytics = GrowthAnalytics(configuration, client, FixedAnonymousIdStore("anon_1"))
+
+        analytics.identify("user_123", username = "john_wayne", email = "  John@Example.com ")
+
+        val body = Json.parseToJsonElement(client.calls.single().third).jsonObject
+        assertEquals("john_wayne", body.stringField("username"))
+        // Client trims; the server lowercases. We keep trimmed plaintext here.
+        assertEquals("John@Example.com", body.stringField("email"))
+    }
+
+    @Test fun `identity persists across instances via the identity store`() = runTest {
+        val store = InMemoryIdentityStore()
+        val first = GrowthAnalytics(configuration, RecordingHttpClient(), FixedAnonymousIdStore("anon_1"), identityStore = store)
+        first.identify("user_123", username = "jw", email = "jw@example.com")
+
+        // Simulate a relaunch: fresh instance, same durable identity store.
+        val client = RecordingHttpClient()
+        val second = GrowthAnalytics(configuration, client, FixedAnonymousIdStore("anon_1"), identityStore = store)
+        assertEquals("user_123", second.getUserId())
+        second.track("paywall.opened")
+        val body = Json.parseToJsonElement(client.calls.single().third).jsonObject
+        assertEquals("user_123", body.stringField("userId"))
+    }
+
+    @Test fun `reset clears identity and rotates the anonymous id`() = runTest {
+        val client = RecordingHttpClient()
+        val anon = FixedAnonymousIdStore("anon_1")
+        val analytics = GrowthAnalytics(configuration, client, anon, identityStore = InMemoryIdentityStore())
+        analytics.identify("user_123", email = "u@example.com")
+
+        analytics.reset()
+
+        assertNull(analytics.getUserId())
+        assertNull(analytics.getEmail())
+        assertTrue(anon.rotated)
     }
 
     @Test fun `bridges are notified after a successful track`() = runTest {

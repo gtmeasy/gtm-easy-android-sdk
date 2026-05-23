@@ -100,10 +100,17 @@ The store auto-synthesizes Meta `_fbc` / `_fbp` and persists each click ID for 9
 
 ```kotlin
 lifecycleScope.launch {
-    analytics.identify(userId = "user_123", traits = mapOf("plan" to "pro", "email" to "u@x.com"))
+    // username + email are first-class — pass by name. They sit after `traits`, so the
+    // legacy positional call identify("user_123", mapOf(...)) keeps working unchanged.
+    analytics.identify(userId = "user_123", username = "john_wayne", email = "u@x.com", traits = mapOf("plan" to "pro"))
     analytics.track("feature.used", mapOf("feature" to "export"))
+
+    // On logout: forget the identity and rotate the anonymous id.
+    analytics.reset()
 }
 ```
+
+`username` + `email` persist in `SharedPreferences` and reattach to every later `track`.
 
 Email/phone in traits are SHA-256 hashed server-side for Enhanced Matching — never hash on the client.
 
