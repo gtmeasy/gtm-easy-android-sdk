@@ -5,8 +5,14 @@ First-party Kotlin SDK for [GTM Easy](https://gtmeasy.com) growth analytics, nat
 Targets: **Android 6.0 (API 23)+** and **JVM 11+** for backend / server use.
 
 ```kotlin
-implementation("com.gtmeasy:growth:0.2.0")
+implementation("com.gtmeasy:growth:0.3.0")
 ```
+
+## What's new (v0.3.0)
+
+- **First-class identity**: `identify(userId, traits, username, email)` accepts optional `username` and `email` as top-level fields (backed by `GrowthIdentityStore`), persisted to `SharedPreferences` and reused on every later `track`.
+- **Logout-safe reset**: `identify`/`track`/`submitPlayInstallReferrer` snapshot identity under the mutex via `IdentitySnapshot`; `reset()` rotates the anon id and clears identity under one mutex section, so a concurrent logout can no longer tear the anon id.
+- **Identity-aware bridges**: Clarity / PostHog / Sentry / Statsig propagate `username`/`email` and clear on logout.
 
 ## What's new (v0.2.0)
 
