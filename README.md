@@ -5,8 +5,12 @@ First-party Kotlin SDK for [GTM Easy](https://gtmeasy.com) growth analytics, nat
 Targets: **Android 6.0 (API 23)+** and **JVM 11+** for backend / server use.
 
 ```kotlin
-implementation("com.gtmeasy:growth:0.3.0")
+implementation("com.gtmeasy:growth:0.4.0")
 ```
+
+## What's new (v0.4.0)
+
+- **Onboarding surveys**: `analytics.submitSurvey(surveyId, responses)` captures flexible, self-describing survey answers (single/multi choice, rating, NPS, scale, boolean, free text) with no length truncation. Build answers with the `SurveyAnswers` factories. `trackSurveyShown` / `trackSurveyStarted` extension functions power the shown→completed funnel on the dashboard.
 
 ## What's new (v0.3.0)
 
@@ -82,6 +86,63 @@ user:
 
 ```kotlin
 lifecycleScope.launch { analytics.reset() }
+```
+
+## Onboarding surveys
+
+Capture flexible onboarding-survey answers. Each answer is self-describing (it
+carries its question type + optional human label), so the GTM Easy dashboard
+aggregates choice breakdowns, rating histograms, NPS, and free-text samples
+without any server-side survey definition. Answers are stored verbatim (no
+240-char truncation) in a dedicated survey store.
+
+```kotlin
+import com.gtmeasy.growth.SurveyAnswers
+import com.gtmeasy.growth.trackSurveyShown
+
+lifecycleScope.launch {
+    // Optional: mark shown so the dashboard can compute a shown → completed rate.
+    analytics.trackSurveyShown(surveyId = "onboarding_v1", surveyName = "Onboarding")
+
+    val ack = analytics.submitSurvey(
+        surveyId = "onboarding_v1",
+        surveyName = "Onboarding",
+        surveyVersion = "2",
+        responses = listOf(
+            SurveyAnswers.singleChoice("source", "tiktok", label = "TikTok", questionText = "Where did you hear about us?"),
+            SurveyAnswers.multiChoice("goals", listOf("focus", "limits"), labels = listOf("Stay focused", "Set limits")),
+            SurveyAnswers.nps("recommend", 9),
+            SurveyAnswers.rating("first_impression", 5),
+            SurveyAnswers.text("anything_else", "Loving it so far"),
+        ),
+    )
+    println("${ack.submissionId} ${ack.accepted}") // idempotency key + rows persisted
+}
+```
+
+Pass `status = SurveyStatus.PARTIAL` to store answers without completing the
+survey (no completion event fires), or `SurveyStatus.DISMISSED` when the user
+closes it. Supply your own `submissionId` to make retries idempotent. A completed
+or dismissed submission also records a `survey.completed` / `survey.dismissed`
+lifecycle event for the user-journey timeline and connector fan-out.
+
+### Extensible metadata
+
+Attach free-form `metadata` to a submission (echoed onto every answer row) or to
+an individual answer (merged **over** the submission-level payload). It lands in
+a dedicated JSON column read with `JSONExtract` on demand — add A/B variants,
+answer timings, or any future field **without a schema migration**. Both accept a
+plain `Map<String, Any?>`.
+
+```kotlin
+analytics.submitSurvey(
+    surveyId = "onboarding_v1",
+    responses = listOf(
+        SurveyAnswers.rating("first_impression", 5, metadata = mapOf("ms_to_answer" to 1200)),
+        SurveyAnswers.text("anything_else", "Loving it"),
+    ),
+    metadata = mapOf("variant" to "B", "flow" to "paywall_first"), // on every row
+)
 ```
 
 ## Bridges — one user, all your tools

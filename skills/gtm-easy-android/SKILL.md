@@ -152,7 +152,37 @@ analytics.bridges += StatsigBridge { id -> Statsig.updateUserAsync(StatsigUser(u
 
 Bridge failures never bubble up — bridge code is wrapped in `runCatching`.
 
-## 10. Things to NOT do
+## 10. Onboarding surveys
+
+Capture flexible onboarding answers — choice breakdowns, rating histograms, NPS, and free-text samples aggregate on the dashboard with no server-side survey definition. Mark the survey shown first (optional, drives the shown→completed rate), then submit answers built with the `SurveyAnswers` factories:
+
+```kotlin
+import com.gtmeasy.growth.SurveyAnswers
+import com.gtmeasy.growth.trackSurveyShown
+
+lifecycleScope.launch {
+    analytics.trackSurveyShown(surveyId = "onboarding_v1", surveyName = "Onboarding")
+
+    val ack = analytics.submitSurvey(
+        surveyId = "onboarding_v1",
+        surveyName = "Onboarding",
+        surveyVersion = "2",
+        responses = listOf(
+            SurveyAnswers.singleChoice("source", "tiktok", label = "TikTok", questionText = "Where did you hear about us?"),
+            SurveyAnswers.multiChoice("goals", listOf("focus", "limits"), labels = listOf("Stay focused", "Set limits")),
+            SurveyAnswers.nps("recommend", 9),
+            SurveyAnswers.rating("first_impression", 5),
+            SurveyAnswers.text("anything_else", "Loving it so far"),
+        ),
+    )
+}
+```
+
+Pass `status = SurveyStatus.PARTIAL` to store answers without firing a completion event, or `SurveyStatus.DISMISSED` when the user closes it. The SDK mints the `submissionId` on-device so a transparent retry reuses the same key (server dedups); pass your own to make app-level retries idempotent. Don't truncate free text — the survey store accepts up to 2 000 chars per answer.
+
+Attach free-form `metadata: Map<String, Any?>` to the whole submission (`submitSurvey(..., metadata = mapOf("variant" to "B"))`, echoed onto every answer row) or to a single answer (`SurveyAnswers.rating("q", 5, metadata = mapOf("ms_to_answer" to 1200))`, merged **over** the submission-level payload). It lands in a JSON column read with `JSONExtract` on demand — use it for A/B variants, answer timings, or any field you may add later, with no schema migration.
+
+## 11. Things to NOT do
 
 - **Don't construct `GrowthAnalytics` per call site.** Use the singleton in `GrowthClient`.
 - **Don't fire `trackFirstOpen()` manually after registering `GrowthLifecycleObserver`.** It'll double-fire.
@@ -160,7 +190,7 @@ Bridge failures never bubble up — bridge code is wrapped in `runCatching`.
 - **Don't hash email/phone before passing to `identify`.** The server hashes; double-hashing breaks Enhanced Matching.
 - **Don't depend on `usesCleartextTraffic`** unless you're pointing at an HTTP LAN dev server. Production is HTTPS by default.
 
-## 11. Verifying the wire-up
+## 12. Verifying the wire-up
 
 1. Install the debug APK on an emulator with Google Play services.
 2. First cold start should produce `app.first_open` + `app.opened`. Subsequent launches produce only `app.opened` (visible in the GTM Easy dashboard → Events).

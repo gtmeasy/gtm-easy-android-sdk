@@ -3,6 +3,7 @@ package com.gtmeasy.growth
 import android.os.Build
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -13,6 +14,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 
 class GrowthAnalyticsException(val statusCode: Int, val responseBody: String?) :
@@ -192,7 +194,7 @@ class GrowthAnalytics @JvmOverloads constructor(
     }
 
     companion object {
-        const val SDK_VERSION = "0.3.0"
+        const val SDK_VERSION = "0.4.0"
     }
 
     suspend fun trackFirstOpen() = track("app.first_open")
@@ -230,7 +232,76 @@ class GrowthAnalytics @JvmOverloads constructor(
         return post(body, "/api/v1/growth/attribution/play-install-referrer")
     }
 
+    /**
+     * Submit a flexible onboarding-survey response. Answers persist to the
+     * dedicated survey store (no 240-char truncation) and a
+     * `survey.completed`/`survey.dismissed` lifecycle event is recorded
+     * ([SurveyStatus.PARTIAL] stores answers without one). Pass [submissionId]
+     * to make retries idempotent (one is generated client-side when omitted, so
+     * a transparent retry reuses the SAME key). Build [responses] with the
+     * [SurveyAnswers] factories.
+     */
+    suspend fun submitSurvey(
+        surveyId: String,
+        responses: List<SurveyAnswer>,
+        surveyName: String? = null,
+        surveyVersion: String? = null,
+        status: SurveyStatus = SurveyStatus.COMPLETED,
+        submissionId: String? = null,
+        properties: Map<String, Any?> = emptyMap(),
+        metadata: Map<String, Any?> = emptyMap(),
+    ): SurveySubmitResponse {
+        // Generate the idempotency key on-device so a transparent retry reuses it
+        // and the server dedups, instead of minting a fresh UUID per attempt.
+        val resolvedSubmissionId = submissionId ?: UUID.randomUUID().toString().lowercase()
+        val enrichedProperties = properties + mapOf("_ctx" to commonContext())
+        val (snapUserId, snapAnon) = mutex.withLock { userId to anonStore.get() }
+        val body = buildJsonObject {
+            put("app", JsonPrimitive(configuration.app))
+            put("environment", JsonPrimitive(configuration.environment.wire))
+            putNullable("userId", snapUserId)
+            put("anonymousId", JsonPrimitive(snapAnon))
+            put("surveyId", JsonPrimitive(surveyId))
+            putNullable("surveyName", surveyName)
+            putNullable("surveyVersion", surveyVersion)
+            put("submissionId", JsonPrimitive(resolvedSubmissionId))
+            put("status", JsonPrimitive(status.wire))
+            put("platform", JsonPrimitive(detectPlatform()))
+            putNullable("appVersion", appVersion())
+            put("locale", JsonPrimitive(Locale.getDefault().toLanguageTag()))
+            put("occurredAt", JsonPrimitive(iso8601Now()))
+            put("responses", json.encodeToJsonElement(ListSerializer(SurveyAnswer.serializer()), responses))
+            put("properties", enrichedProperties.toJson())
+            // Submission-level extensibility payload echoed onto every answer row.
+            put("metadata", metadata.toJson())
+        }
+        if (configuration.debug) {
+            GrowthDebugSink.record(
+                GrowthDebugSink.DebugEvent(GrowthDebugSink.Kind.TRACK, "survey:$surveyId", mapOf("status" to status.wire))
+            )
+        }
+        // postRaw throws on non-2xx — call it OUTSIDE runCatching so the error
+        // propagates instead of being swallowed by the parse guard.
+        val responseBody = postRaw(body, "/api/v1/growth/surveys")
+        val parsed = runCatching { json.parseToJsonElement(responseBody).jsonObjectOrNull() }.getOrNull()
+        val ackSubmissionId = parsed?.get("submissionId")?.primitiveStringOrNull() ?: resolvedSubmissionId
+        val accepted = parsed?.get("accepted")?.let { (it as? JsonPrimitive)?.content?.toIntOrNull() } ?: 0
+        val warnings = (parsed?.get("warnings") as? JsonArray)?.mapNotNull { it.primitiveStringOrNull() } ?: emptyList()
+        return SurveySubmitResponse(ackSubmissionId, accepted, warnings)
+    }
+
     private suspend fun post(body: JsonObject, path: String): IngestResponse {
+        // postRaw throws on non-2xx — keep it OUTSIDE runCatching (which only
+        // guards JSON parsing) so ingest rejections surface as exceptions.
+        val responseBody = postRaw(body, path)
+        val parsed = runCatching { json.parseToJsonElement(responseBody).jsonObjectOrNull() }.getOrNull()
+        val eventId = parsed?.get("event")?.jsonObjectOrNull()?.get("id")?.primitiveStringOrNull()
+        val eventName = parsed?.get("event")?.jsonObjectOrNull()?.get("eventName")?.primitiveStringOrNull()
+        return IngestResponse(eventId, eventName)
+    }
+
+    /** Shared transport: POST [body] to [path], throw on non-2xx, return the raw response body. */
+    private suspend fun postRaw(body: JsonObject, path: String): String {
         val url = configuration.endpoint.trimEnd('/') + path
         val headers = buildMap {
             put("content-type", "application/json")
@@ -241,10 +312,7 @@ class GrowthAnalytics @JvmOverloads constructor(
         if (response.status !in 200..299) {
             throw GrowthAnalyticsException(response.status, response.body)
         }
-        val parsed = runCatching { json.parseToJsonElement(response.body).jsonObjectOrNull() }.getOrNull()
-        val eventId = parsed?.get("event")?.jsonObjectOrNull()?.get("id")?.primitiveStringOrNull()
-        val eventName = parsed?.get("event")?.jsonObjectOrNull()?.get("eventName")?.primitiveStringOrNull()
-        return IngestResponse(eventId, eventName)
+        return response.body
     }
 
     private fun notifyBridgesIdentify(userId: String?, anonymousId: String, username: String?, email: String?, traits: Map<String, Any?>) {
@@ -304,10 +372,10 @@ private fun MutableMap<String, JsonElement>.putNullable(key: String, value: Stri
     if (value != null) put(key, JsonPrimitive(value))
 }
 
-private fun Map<String, Any?>.toJson(): JsonObject = JsonObject(mapValues { (_, v) -> v.toJson() })
+internal fun Map<String, Any?>.toJson(): JsonObject = JsonObject(mapValues { (_, v) -> v.toJson() })
 
 @Suppress("UNCHECKED_CAST")
-private fun Any?.toJson(): JsonElement = when (this) {
+internal fun Any?.toJson(): JsonElement = when (this) {
     null -> JsonNull
     is Boolean -> JsonPrimitive(this)
     is Number -> JsonPrimitive(this)

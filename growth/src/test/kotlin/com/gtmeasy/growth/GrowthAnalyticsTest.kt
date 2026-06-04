@@ -2,6 +2,7 @@ package com.gtmeasy.growth
 
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -182,6 +183,78 @@ class GrowthAnalyticsTest {
         val response = analytics.track("app.first_open")
         assertEquals("evt_1", response.eventId)
         assertEquals("app.first_open", response.eventName)
+    }
+
+    @Test fun `submitSurvey posts typed answers and parses the ack`() = runTest {
+        val client = RecordingHttpClient(GrowthHttpResponse(201, "{\"submissionId\":\"sub_1\",\"accepted\":3,\"warnings\":[]}"))
+        val analytics = GrowthAnalytics(configuration, client, FixedAnonymousIdStore("anon_1"))
+        analytics.setUserId("user_9")
+
+        val result = analytics.submitSurvey(
+            surveyId = "onboarding_v1",
+            surveyName = "Onboarding",
+            surveyVersion = "2",
+            responses = listOf(
+                SurveyAnswers.singleChoice("source", "tiktok", label = "TikTok", questionText = "Where?", metadata = mapOf("ms" to 640)),
+                SurveyAnswers.rating("satisfaction", 5),
+                SurveyAnswers.text("goal", "Track screen time"),
+            ),
+            metadata = mapOf("variant" to "B", "flow" to "paywall_first"),
+        )
+
+        assertEquals("sub_1", result.submissionId)
+        assertEquals(3, result.accepted)
+
+        val call = client.calls.single()
+        assertEquals("https://example.gtmeasy.com/api/v1/growth/surveys", call.first)
+        val body = Json.parseToJsonElement(call.third).jsonObject
+        assertEquals("onboarding_v1", body.stringField("surveyId"))
+        assertEquals("completed", body.stringField("status"))
+        assertEquals("user_9", body.stringField("userId"))
+        // The SDK mints the idempotency key on-device (no caller value) and SENDS
+        // it, so a transparent retry reuses the same key for server dedup.
+        assertEquals(36, body.stringField("submissionId")?.length)
+        // Common context rides under properties._ctx, exactly like track().
+        val props = body["properties"] as JsonObject
+        assertEquals("gtm-easy-kotlin", (props["_ctx"] as JsonObject).stringField("sdk"))
+        val responses = body["responses"] as JsonArray
+        assertEquals(3, responses.size)
+        val first = responses[0].jsonObject
+        assertEquals("single_choice", first.stringField("type"))
+        assertEquals("tiktok", (first["choices"] as JsonArray)[0].let { (it as JsonPrimitive).content })
+        // explicitNulls = false: an omitted answer field must not appear.
+        assertNull(responses[2].jsonObject["choices"])
+        // Submission-level metadata echoed onto the body; per-answer metadata on
+        // the answer row; answers without metadata omit the key (explicitNulls=false).
+        val metadata = body["metadata"] as JsonObject
+        assertEquals("B", metadata.stringField("variant"))
+        assertEquals("paywall_first", metadata.stringField("flow"))
+        assertEquals(640, (first["metadata"] as JsonObject)["ms"].let { (it as JsonPrimitive).content.toInt() })
+        assertNull(responses[1].jsonObject["metadata"])
+    }
+
+    @Test fun `submitSurvey falls back to the supplied submissionId`() = runTest {
+        val client = RecordingHttpClient(GrowthHttpResponse(201, "{\"accepted\":1,\"warnings\":[\"x\"]}"))
+        val analytics = GrowthAnalytics(configuration, client, FixedAnonymousIdStore("anon_1"))
+        val result = analytics.submitSurvey(
+            surveyId = "s",
+            submissionId = "sub_client",
+            responses = listOf(SurveyAnswers.text("q1", "a")),
+        )
+        assertEquals("sub_client", result.submissionId)
+        assertEquals(listOf("x"), result.warnings)
+    }
+
+    @Test fun `trackSurveyShown emits a survey_shown event`() = runTest {
+        val client = RecordingHttpClient(GrowthHttpResponse(201, "{\"event\":{\"id\":\"e\",\"eventName\":\"survey.shown\"}}"))
+        val analytics = GrowthAnalytics(configuration, client, FixedAnonymousIdStore("anon_1"))
+        analytics.trackSurveyShown(surveyId = "onboarding_v1", surveyName = "Onboarding")
+        val call = client.calls.single()
+        assertEquals("https://example.gtmeasy.com/api/v1/growth/events", call.first)
+        val body = Json.parseToJsonElement(call.third).jsonObject
+        assertEquals("survey.shown", body.stringField("eventName"))
+        val props = body["properties"] as JsonObject
+        assertEquals("onboarding_v1", props.stringField("survey_id"))
     }
 
     @Test fun `track without setting userId omits it from payload`() = runTest {
