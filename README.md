@@ -5,8 +5,12 @@ First-party Kotlin SDK for [GTM Easy](https://gtmeasy.com) growth analytics, nat
 Targets: **Android 6.0 (API 23)+** and **JVM 11+** for backend / server use.
 
 ```kotlin
-implementation("com.gtmeasy:growth:0.4.0")
+implementation("com.gtmeasy:growth:0.5.0")
 ```
+
+## What's new (v0.5.0)
+
+- **Version alignment**: the GTM Easy SDKs (Kotlin / TypeScript / Swift) are now unified at **0.5.0** — no API changes since 0.4.x, so onboarding surveys + extensible survey metadata ship at the same version on every platform.
 
 ## What's new (v0.4.0)
 

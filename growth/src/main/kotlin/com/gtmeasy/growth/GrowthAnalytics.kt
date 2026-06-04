@@ -194,7 +194,7 @@ class GrowthAnalytics @JvmOverloads constructor(
     }
 
     companion object {
-        const val SDK_VERSION = "0.4.0"
+        const val SDK_VERSION = "0.5.0"
     }
 
     suspend fun trackFirstOpen() = track("app.first_open")
