@@ -71,6 +71,10 @@ class GrowthAnalytics @JvmOverloads constructor(
 
     fun getEmail(): String? = email
 
+    /** The configured environment. Read by [GrowthLifecycleObserver] to gate build-only
+     *  `app.updated` events outside production. */
+    val environment: GrowthAnalyticsConfiguration.Environment get() = configuration.environment
+
     suspend fun getAnonymousId(): String = anonStore.get()
 
     /** Direct accessor for click-id capture from deep links. */
@@ -194,11 +198,37 @@ class GrowthAnalytics @JvmOverloads constructor(
     }
 
     companion object {
-        const val SDK_VERSION = "0.5.0"
+        const val SDK_VERSION = "0.6.0"
     }
 
     suspend fun trackFirstOpen() = track("app.first_open")
     suspend fun trackAppOpen() = track("app.opened")
+
+    /**
+     * Record that the app was updated (or that the SDK first ran on a pre-existing
+     * install). Deliberately NOT an install: the server never counts `app.updated` in the
+     * install funnel, never alerts on it, and never forwards it to an ad platform.
+     * [GrowthLifecycleObserver] emits this for you — call it directly only for custom
+     * lifecycle wiring.
+     */
+    suspend fun trackAppUpdated(
+        fromVersion: String?,
+        fromBuild: String?,
+        toVersion: String?,
+        toBuild: String?,
+        reason: GrowthUpdateReason,
+        isRealUpdate: Boolean,
+    ): IngestResponse {
+        val properties = buildMap<String, Any?> {
+            put("reason", reason.wire)
+            put("is_real_update", isRealUpdate)
+            fromVersion?.let { put("from_version", it) }
+            fromBuild?.let { put("from_build", it) }
+            toVersion?.let { put("to_version", it) }
+            toBuild?.let { put("to_build", it) }
+        }
+        return track("app.updated", properties)
+    }
 
     suspend fun trackPurchaseCompleted(
         amount: Double,

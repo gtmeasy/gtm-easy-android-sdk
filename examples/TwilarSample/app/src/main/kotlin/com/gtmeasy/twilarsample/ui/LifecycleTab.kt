@@ -46,12 +46,12 @@ fun LifecycleTab() {
     ) {
         SectionTitle("Manual lifecycle events")
         Text(
-            "`GrowthLifecycleObserver` auto-fires `app.first_open` (once per install) and `app.opened` on every activity resume. Use these buttons for ad-hoc events.",
+            "`GrowthLifecycleObserver` already auto-fires `app.first_open` (once per install, gated) and `app.opened` on every activity resume. These buttons fire RAW events for ad-hoc testing — `trackFirstOpen()` is unconditional, so tapping it repeatedly really does send repeated installs. In production, rely on the observer, not this button.",
             style = MaterialTheme.typography.bodySmall,
         )
 
         Button(onClick = { run("app.first_open") { analytics.trackFirstOpen() } }) {
-            Text("Track app.first_open (idempotent)")
+            Text("Track app.first_open (raw — fires every tap)")
         }
         Button(onClick = { run("app.opened") { analytics.trackAppOpen() } }) {
             Text("Track app.opened")

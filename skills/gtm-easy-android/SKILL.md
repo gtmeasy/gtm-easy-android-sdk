@@ -66,15 +66,20 @@ class MyApp : Application() {
     override fun onCreate() {
         super.onCreate()
         val analytics = GrowthClient.init(this)
-        // Fires app.first_open (once per install) + app.opened on every foreground.
-        GrowthLifecycleObserver(analytics, this).register()
+        val observer = GrowthLifecycleObserver(analytics, this)
+        // First adoption only: if this app already had users before adding the SDK, mark
+        // known-existing users so they aren't counted as new installs. Call BEFORE register().
+        // if (userExistedBeforeThisRelease) observer.markInstalledBeforeTracking()
+        // Fires app.first_open (fresh install only) / app.updated (version change) +
+        // app.opened on every foreground.
+        observer.register()
     }
 }
 ```
 
 Register the `Application` subclass in `AndroidManifest.xml` via `android:name=".MyApp"`.
 
-NEVER call `analytics.trackFirstOpen()` manually after registering the lifecycle observer — it'll double-fire. The observer's `app.first_open` is UserDefaults-guarded (well, `SharedPreferences`-guarded); manual calls are not.
+NEVER call `analytics.trackFirstOpen()` manually after registering the lifecycle observer — it bypasses the `SharedPreferences` install/update guard and will count app updates as new installs.
 
 ## 4. Deep-link click-id capture
 
@@ -193,7 +198,7 @@ Attach free-form `metadata: Map<String, Any?>` to the whole submission (`submitS
 ## 12. Verifying the wire-up
 
 1. Install the debug APK on an emulator with Google Play services.
-2. First cold start should produce `app.first_open` + `app.opened`. Subsequent launches produce only `app.opened` (visible in the GTM Easy dashboard → Events).
+2. First cold start on a fresh install produces `app.first_open` + `app.opened`. Subsequent same-version launches produce only `app.opened`. After an app update, the first launch produces `app.updated` + `app.opened` (never a second `app.first_open`) — visible in the GTM Easy dashboard → Events.
 3. Send the app a deep-link click ID:
    ```bash
    adb shell am start -W -a android.intent.action.VIEW \
