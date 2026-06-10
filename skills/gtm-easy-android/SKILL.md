@@ -34,8 +34,45 @@ The SDK is **published to Maven Central**; no extra repository declarations are 
 package com.example.growth
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import com.gtmeasy.growth.GrowthAnalytics
 import com.gtmeasy.growth.GrowthAnalyticsConfiguration
+
+/// Helper to determine the build and distribution environment
+object EnvHelper {
+    /**
+     * True if the app is running in a debuggable build (local/emulator runs).
+     */
+    fun isDebug(context: Context): Boolean {
+        return (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+
+    /**
+     * True if the app was NOT installed from the Google Play Store (e.g. sideloaded, Firebase App Distribution, or local build).
+     */
+    fun isSandboxOrLocal(context: Context): Boolean {
+        val pm = context.packageManager
+        val installer = try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                pm.getInstallSourceInfo(context.packageName).installingPackageName
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getInstallerPackageName(context.packageName)
+            }
+        } catch (e: Exception) {
+            null
+        }
+        // Installer is null for sideloads/local debug runs, and different for alternate app stores
+        return installer != "com.android.vending"
+    }
+
+    /**
+     * True if running in a debug build or installed via non-Play Store channels (sandbox/local)
+     */
+    fun isDebugOrSandbox(context: Context): Boolean {
+        return isDebug(context) || isSandboxOrLocal(context)
+    }
+}
 
 object GrowthClient {
     @Volatile private var instance: GrowthAnalytics? = null
@@ -48,7 +85,8 @@ object GrowthClient {
                     writeKey = "<per-app-write-key>",  // public SDK key, safe to ship
                     context = applicationContext,
                     environment = GrowthAnalyticsConfiguration.Environment.PRODUCTION,
-                    // disabled = BuildConfig.DEBUG,  // suppress all network calls in debug builds
+                    // Disable the SDK in debug runs and non-production testing channels by default
+                    disabled = EnvHelper.isDebugOrSandbox(applicationContext),
                 )
             ).also { instance = it }
         }
@@ -195,7 +233,7 @@ Attach free-form `metadata: Map<String, Any?>` to the whole submission (`submitS
 - **Don't pass GAID manually.** `GrowthDeviceIdentifiers` reads it reflectively and suppresses GAID when Limit-Ad-Tracking is on, per Google policy.
 - **Don't hash email/phone before passing to `identify`.** The server hashes; double-hashing breaks Enhanced Matching.
 - **Don't depend on `usesCleartextTraffic`** unless you're pointing at an HTTP LAN dev server. Production is HTTPS by default.
-- **Don't add `if (!BuildConfig.DEBUG)` guards around analytics calls.** Set `disabled = BuildConfig.DEBUG` in the configuration instead — all methods still return valid `IngestResponse` objects and call sites stay clean.
+- **Don't add if (!BuildConfig.DEBUG) guards around analytics calls.** Set `disabled` dynamically using `EnvHelper.isDebugOrSandbox(context)` in the configuration wrapper instead — all methods still return valid `IngestResponse` objects and call sites stay clean.
 
 ## 12. Verifying the wire-up
 
