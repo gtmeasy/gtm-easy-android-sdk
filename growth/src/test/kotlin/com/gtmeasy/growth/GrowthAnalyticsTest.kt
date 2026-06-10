@@ -266,6 +266,38 @@ class GrowthAnalyticsTest {
         assertNotNull(body["anonymousId"])
     }
 
+    @Test fun `disabled configuration suppresses all network calls`() = runTest {
+        val client = RecordingHttpClient()
+        val disabledConfig = configuration.copy(disabled = true)
+        val analytics = GrowthAnalytics(disabledConfig, client, FixedAnonymousIdStore("anon_1"))
+
+        val identifyRes = analytics.identify("user_123", mapOf("plan" to "pro"))
+        val trackRes = analytics.track("paywall.opened")
+        val playRes = analytics.submitPlayInstallReferrer("utm_source=test")
+        val surveyRes = analytics.submitSurvey(
+            surveyId = "s1",
+            responses = listOf(SurveyAnswers.text("q", "a")),
+        )
+
+        assertTrue(client.calls.isEmpty())
+        assertNull(identifyRes.eventId)
+        assertNull(trackRes.eventId)
+        assertNull(playRes.eventId)
+        assertEquals(0, surveyRes.accepted)
+        assertTrue(surveyRes.submissionId.isNotBlank())
+    }
+
+    @Test fun `disabled echoes caller-supplied submissionId`() = runTest {
+        val disabledConfig = configuration.copy(disabled = true)
+        val analytics = GrowthAnalytics(disabledConfig, RecordingHttpClient(), FixedAnonymousIdStore("anon_1"))
+        val res = analytics.submitSurvey(
+            surveyId = "s1",
+            submissionId = "caller-id",
+            responses = listOf(),
+        )
+        assertEquals("caller-id", res.submissionId)
+    }
+
     private fun JsonObject.stringField(key: String): String? =
         (this[key] as? JsonPrimitive)?.content
     private fun JsonObject.doubleField(key: String): Double =

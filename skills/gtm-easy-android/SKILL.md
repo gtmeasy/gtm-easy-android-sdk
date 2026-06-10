@@ -48,6 +48,7 @@ object GrowthClient {
                     writeKey = "<per-app-write-key>",  // public SDK key, safe to ship
                     context = applicationContext,
                     environment = GrowthAnalyticsConfiguration.Environment.PRODUCTION,
+                    // disabled = BuildConfig.DEBUG,  // suppress all network calls in debug builds
                 )
             ).also { instance = it }
         }
@@ -194,6 +195,7 @@ Attach free-form `metadata: Map<String, Any?>` to the whole submission (`submitS
 - **Don't pass GAID manually.** `GrowthDeviceIdentifiers` reads it reflectively and suppresses GAID when Limit-Ad-Tracking is on, per Google policy.
 - **Don't hash email/phone before passing to `identify`.** The server hashes; double-hashing breaks Enhanced Matching.
 - **Don't depend on `usesCleartextTraffic`** unless you're pointing at an HTTP LAN dev server. Production is HTTPS by default.
+- **Don't add `if (!BuildConfig.DEBUG)` guards around analytics calls.** Set `disabled = BuildConfig.DEBUG` in the configuration instead — all methods still return valid `IngestResponse` objects and call sites stay clean.
 
 ## 12. Verifying the wire-up
 

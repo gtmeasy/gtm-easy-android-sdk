@@ -114,6 +114,7 @@ class GrowthAnalytics @JvmOverloads constructor(
         username: String? = null,
         email: String? = null,
     ): IngestResponse {
+        if (configuration.disabled) return IngestResponse(null, null)
         // Mutate + snapshot identity AND the anon id under one lock so the values
         // we send (and link) can't be torn by a concurrent reset()/track().
         val snap = mutex.withLock {
@@ -155,6 +156,7 @@ class GrowthAnalytics @JvmOverloads constructor(
         metricValue: Double? = null,
         metricLabel: String? = null,
     ): IngestResponse {
+        if (configuration.disabled) return IngestResponse(null, null)
         val enrichedProperties = properties + mapOf("_ctx" to commonContext())
         // Snapshot userId + anon id atomically under the same lock identify()/reset()
         // use, so a concurrent reset() can't pair a cleared user with the old anon id
@@ -198,7 +200,7 @@ class GrowthAnalytics @JvmOverloads constructor(
     }
 
     companion object {
-        const val SDK_VERSION = "0.6.0"
+        const val SDK_VERSION = "0.7.0"
     }
 
     suspend fun trackFirstOpen() = track("app.first_open")
@@ -247,6 +249,7 @@ class GrowthAnalytics @JvmOverloads constructor(
      * resolves UTM and campaign metadata and stores the parsed result.
      */
     suspend fun submitPlayInstallReferrer(referrer: String): IngestResponse {
+        if (configuration.disabled) return IngestResponse(null, null)
         val (snapUserId, snapAnon) = mutex.withLock { userId to anonStore.get() }
         val body = buildJsonObject {
             put("app", JsonPrimitive(configuration.app))
@@ -281,6 +284,9 @@ class GrowthAnalytics @JvmOverloads constructor(
         properties: Map<String, Any?> = emptyMap(),
         metadata: Map<String, Any?> = emptyMap(),
     ): SurveySubmitResponse {
+        if (configuration.disabled) return SurveySubmitResponse(
+            submissionId ?: UUID.randomUUID().toString().lowercase(), 0, emptyList()
+        )
         // Generate the idempotency key on-device so a transparent retry reuses it
         // and the server dedups, instead of minting a fresh UUID per attempt.
         val resolvedSubmissionId = submissionId ?: UUID.randomUUID().toString().lowercase()

@@ -29,6 +29,12 @@ data class GrowthAnalyticsConfiguration(
      * debug UI for a live feed.
      */
     val debug: Boolean = false,
+    /**
+     * When true, all network calls are suppressed and every method returns an
+     * empty noop response. Use to disable tracking in development or CI
+     * environments without removing SDK call sites from your code.
+     */
+    val disabled: Boolean = false,
 ) {
     enum class Environment(val wire: String) {
         PRODUCTION("production"),
