@@ -5,8 +5,15 @@ First-party Kotlin SDK for [GTM Easy](https://gtmeasy.com) growth analytics, nat
 Targets: **Android 6.0 (API 23)+** and **JVM 11+** for backend / server use.
 
 ```kotlin
-implementation("com.gtmeasy:growth:0.6.0")
+implementation("com.gtmeasy:growth:0.8.0")
 ```
+
+## What's new (v0.8.0)
+
+- **System context (locale / timezone).** Every identify / track / survey call sends BCP-47
+  `locale` and IANA `timezone`, and mirrors a denser snapshot under `properties._ctx`
+  (`region`, `language`, `utc_offset_min`, `preferred_languages`). Injectable via
+  `GrowthSystemContextProvider` for tests. Top-level `country` remains server IP geo only.
 
 ## What's new (v0.6.0)
 

@@ -37,6 +37,7 @@ class GrowthAnalytics @JvmOverloads constructor(
     deviceIdentifiers: GrowthDeviceIdentifiers? = null,
     clickIdStore: GrowthClickIdStore? = null,
     identityStore: IdentityStore? = null,
+    systemContext: GrowthSystemContextProvider? = null,
 ) {
     private val http: GrowthHttpClient = httpClient ?: UrlConnectionHttpClient(configuration.timeoutMs)
     private val anonStore: AnonymousIdStore = anonymousIdStore ?: configuration.context
@@ -47,6 +48,7 @@ class GrowthAnalytics @JvmOverloads constructor(
     private val identityStore: IdentityStore = identityStore ?: configuration.context
         ?.let { SharedPrefsIdentityStore(it) }
         ?: InMemoryIdentityStore()
+    private val systemContext: GrowthSystemContextProvider = systemContext ?: LiveGrowthSystemContextProvider
     private val mutex = Mutex()
     private val json = Json { encodeDefaults = false; explicitNulls = false }
     // @Volatile ensures cross-thread publication; setUserId / getUserId touch
@@ -137,8 +139,9 @@ class GrowthAnalytics @JvmOverloads constructor(
             put("platform", JsonPrimitive(detectPlatform()))
             putNullable("appVersion", appVersion())
             putNullable("buildNumber", buildNumber())
-            put("locale", JsonPrimitive(Locale.getDefault().toLanguageTag()))
-            put("timezone", JsonPrimitive(TimeZone.getDefault().id))
+            val sys = systemContext.current()
+            put("locale", JsonPrimitive(sys.locale))
+            put("timezone", JsonPrimitive(sys.timezone))
             put("traits", enrichedTraits.toJson())
         }
         if (configuration.debug) {
@@ -172,8 +175,9 @@ class GrowthAnalytics @JvmOverloads constructor(
             putNullable("appVersion", appVersion())
             putNullable("buildNumber", buildNumber())
             put("source", JsonPrimitive("native"))
-            put("locale", JsonPrimitive(Locale.getDefault().toLanguageTag()))
-            put("timezone", JsonPrimitive(TimeZone.getDefault().id))
+            val sys = systemContext.current()
+            put("locale", JsonPrimitive(sys.locale))
+            put("timezone", JsonPrimitive(sys.timezone))
             put("occurredAt", JsonPrimitive(iso8601Now()))
             put("properties", enrichedProperties.toJson())
             metricValue?.let { put("metricValue", JsonPrimitive(it)) }
@@ -194,13 +198,14 @@ class GrowthAnalytics @JvmOverloads constructor(
         val device = deviceIds.snapshot()
         ctx.putAll(device.asProperties())
         ctx.putAll(clickIds.snapshot())
+        ctx.putAll(systemContext.current().asContextProperties())
         ctx["sdk"] = "gtm-easy-kotlin"
         ctx["sdk_version"] = SDK_VERSION
         return ctx
     }
 
     companion object {
-        const val SDK_VERSION = "0.7.1"
+        const val SDK_VERSION = "0.8.0"
     }
 
     suspend fun trackFirstOpen() = track("app.first_open")
@@ -304,7 +309,7 @@ class GrowthAnalytics @JvmOverloads constructor(
             put("status", JsonPrimitive(status.wire))
             put("platform", JsonPrimitive(detectPlatform()))
             putNullable("appVersion", appVersion())
-            put("locale", JsonPrimitive(Locale.getDefault().toLanguageTag()))
+            put("locale", JsonPrimitive(systemContext.current().locale))
             put("occurredAt", JsonPrimitive(iso8601Now()))
             put("responses", json.encodeToJsonElement(ListSerializer(SurveyAnswer.serializer()), responses))
             put("properties", enrichedProperties.toJson())
