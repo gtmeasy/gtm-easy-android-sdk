@@ -17,7 +17,7 @@ Working sample (every public surface, 5-tab Compose app): `examples/TwilarSample
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.gtmeasy:growth:0.2.0")
+    implementation("com.gtmeasy:growth:0.9.0")
 
     // Optional — only if the host app already ships these:
     // implementation("com.android.installreferrer:installreferrer:2.2") // for Play Install Referrer
@@ -34,45 +34,9 @@ The SDK is **published to Maven Central**; no extra repository declarations are 
 package com.example.growth
 
 import android.content.Context
-import android.content.pm.ApplicationInfo
 import com.gtmeasy.growth.GrowthAnalytics
 import com.gtmeasy.growth.GrowthAnalyticsConfiguration
-
-/// Helper to determine the build and distribution environment
-object EnvHelper {
-    /**
-     * True if the app is running in a debuggable build (local/emulator runs).
-     */
-    fun isDebug(context: Context): Boolean {
-        return (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-    }
-
-    /**
-     * True if the app was NOT installed from the Google Play Store (e.g. sideloaded, Firebase App Distribution, or local build).
-     */
-    fun isSandboxOrLocal(context: Context): Boolean {
-        val pm = context.packageManager
-        val installer = try {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                pm.getInstallSourceInfo(context.packageName).installingPackageName
-            } else {
-                @Suppress("DEPRECATION")
-                pm.getInstallerPackageName(context.packageName)
-            }
-        } catch (e: Exception) {
-            null
-        }
-        // Installer is null for sideloads/local debug runs, and different for alternate app stores
-        return installer != "com.android.vending"
-    }
-
-    /**
-     * True if running in a debug build or installed via non-Play Store channels (sandbox/local)
-     */
-    fun isDebugOrSandbox(context: Context): Boolean {
-        return isDebug(context) || isSandboxOrLocal(context)
-    }
-}
+import com.gtmeasy.growth.GrowthBuildChannel
 
 object GrowthClient {
     @Volatile private var instance: GrowthAnalytics? = null
@@ -85,8 +49,12 @@ object GrowthClient {
                     writeKey = "<per-app-write-key>",  // public SDK key, safe to ship
                     context = applicationContext,
                     environment = GrowthAnalyticsConfiguration.Environment.PRODUCTION,
-                    // Disable the SDK in debug runs and non-production testing channels by default
-                    disabled = EnvHelper.isDebugOrSandbox(applicationContext),
+                    // Drop events from debuggable builds and Firebase App Distribution installs
+                    // (no network, no durable SDK state). Requires SDK >= 0.9.0.
+                    suppressTestBuilds = true,
+                    // Play internal/closed testing can't be detected on-device. If the app ships a
+                    // dedicated test flavor, mark it explicitly (a non-null override always wins):
+                    // buildChannel = if (BuildConfig.FLAVOR == "internal") GrowthBuildChannel.INTERNAL_TEST else null,
                 )
             ).also { instance = it }
         }
@@ -97,6 +65,8 @@ object GrowthClient {
 ```
 
 `endpoint` defaults to `GrowthAnalyticsConfiguration.DEFAULT_ENDPOINT` (`https://www.gtmeasy.com`). Override only for self-hosted or LAN dev.
+
+Build-channel detection is offline and cached: `FLAG_DEBUGGABLE` → `DEBUG`, installer `dev.firebase.appdistribution` → `INTERNAL_TEST`, installer `com.android.vending` → `PRODUCTION`, anything else / JVM → `UNKNOWN` (never suppressed). Inspect `analytics.resolvedBuildChannel` / `analytics.isSuppressed` at runtime. While suppressed (also with `disabled = true`) every call returns a noop response, nothing hits the network, and no install/identity/click-id state is persisted — so the Play build that later replaces a test build still fires its own `app.first_open`. With `debug = true` suppressed calls appear in `GrowthDebugSink` with `suppressed = true`.
 
 ## 3. Wire `Application.onCreate` + lifecycle observer
 
@@ -233,11 +203,11 @@ Attach free-form `metadata: Map<String, Any?>` to the whole submission (`submitS
 - **Don't pass GAID manually.** `GrowthDeviceIdentifiers` reads it reflectively and suppresses GAID when Limit-Ad-Tracking is on, per Google policy.
 - **Don't hash email/phone before passing to `identify`.** The server hashes; double-hashing breaks Enhanced Matching.
 - **Don't depend on `usesCleartextTraffic`** unless you're pointing at an HTTP LAN dev server. Production is HTTPS by default.
-- **Don't add if (!BuildConfig.DEBUG) guards around analytics calls.** Set `disabled` dynamically using `EnvHelper.isDebugOrSandbox(context)` in the configuration wrapper instead — all methods still return valid `IngestResponse` objects and call sites stay clean.
+- **Don't add if (!BuildConfig.DEBUG) guards around analytics calls, or hand-rolled installer checks feeding `disabled`.** Set `suppressTestBuilds = true` (plus `buildChannel` for test flavors) in the configuration wrapper instead — all methods still return valid `IngestResponse` objects, call sites stay clean, and no install state leaks into the later production build. Don't treat "not installed from Play" as a test build: sideloads and other stores resolve to `UNKNOWN` and are deliberately still tracked.
 
 ## 12. Verifying the wire-up
 
-1. Install the debug APK on an emulator with Google Play services.
+1. Install the debug APK on an emulator with Google Play services. With `suppressTestBuilds = true` a debuggable build sends nothing (only `GrowthDebugSink` shows `suppressed` events) — temporarily pass `buildChannel = GrowthBuildChannel.PRODUCTION` (or drop the flag) while verifying.
 2. First cold start on a fresh install produces `app.first_open` + `app.opened`. Subsequent same-version launches produce only `app.opened`. After an app update, the first launch produces `app.updated` + `app.opened` (never a second `app.first_open`) — visible in the GTM Easy dashboard → Events.
 3. Send the app a deep-link click ID:
    ```bash

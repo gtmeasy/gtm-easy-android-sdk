@@ -26,7 +26,7 @@ interface AnonymousIdStore {
  * the persisted value is durable before any second caller can read.
  */
 internal class SharedPrefsAnonymousIdStore(context: Context) : AnonymousIdStore {
-    private val prefs = context.applicationContext.getSharedPreferences("gtm_easy_growth", Context.MODE_PRIVATE)
+    private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val cached = AtomicReference<String?>(prefs.getString(KEY, null))
     private val lock = Any()
 
@@ -52,7 +52,10 @@ internal class SharedPrefsAnonymousIdStore(context: Context) : AnonymousIdStore 
         cached.set(fresh)
         fresh
     }
-    private companion object { const val KEY = "anonymous_id" }
+    internal companion object {
+        const val PREFS = "gtm_easy_growth"
+        const val KEY = "anonymous_id"
+    }
 }
 
 internal class InMemoryAnonymousIdStore : AnonymousIdStore {

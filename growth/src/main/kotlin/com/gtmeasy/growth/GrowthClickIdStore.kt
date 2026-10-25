@@ -12,11 +12,13 @@ import kotlin.random.Random
  * `ttclid` retention semantics.
  *
  * Without a [Context] this falls back to an in-memory map; call sites should
- * always pass an `applicationContext` for persistence.
+ * always pass an `applicationContext` for persistence. With [memoryOnly] (used by
+ * [GrowthAnalytics] while suppressed) nothing is read from or written to disk.
  */
-class GrowthClickIdStore(context: Context?) {
+class GrowthClickIdStore @JvmOverloads constructor(context: Context?, memoryOnly: Boolean = false) {
 
-    private val prefs: SharedPreferences? = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences? =
+        if (memoryOnly) null else context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     // The fallback in-memory map is used on JVM / when callers pass a null
     // Context. Multi-coroutine writes (e.g. burst capture from a deep link
     // handler + concurrent track()) require thread-safe storage.

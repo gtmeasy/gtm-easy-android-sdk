@@ -35,6 +35,20 @@ data class GrowthAnalyticsConfiguration(
      * environments without removing SDK call sites from your code.
      */
     val disabled: Boolean = false,
+    /**
+     * When true, builds whose [buildChannel] (or auto-detected channel) is
+     * [GrowthBuildChannel.DEBUG], [GrowthBuildChannel.TESTFLIGHT] or
+     * [GrowthBuildChannel.INTERNAL_TEST] behave like [disabled]: no network, no durable
+     * SDK state written. [GrowthBuildChannel.UNKNOWN] is never suppressed.
+     */
+    val suppressTestBuilds: Boolean = false,
+    /**
+     * Override the build channel. Null (default) auto-detects offline:
+     * `FLAG_DEBUGGABLE` → DEBUG, installer Firebase App Distribution → INTERNAL_TEST,
+     * installer Play Store → PRODUCTION, anything else → UNKNOWN. A non-null value always
+     * wins — e.g. pass [GrowthBuildChannel.INTERNAL_TEST] from a test product flavor.
+     */
+    val buildChannel: GrowthBuildChannel? = null,
 ) {
     enum class Environment(val wire: String) {
         PRODUCTION("production"),

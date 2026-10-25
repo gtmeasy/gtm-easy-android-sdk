@@ -23,7 +23,8 @@ object GrowthDebugSink {
             while (buffer.size > MAX_BUFFER) buffer.removeFirst()
         }
         mutableEvents.tryEmit(event)
-        Log.d(TAG, "${event.kind} ${event.label} ${event.properties}")
+        val marker = if (event.suppressed) " [suppressed]" else ""
+        runCatching { Log.d(TAG, "${event.kind}$marker ${event.label} ${event.properties}") }
     }
 
     fun recent(limit: Int = 50): List<DebugEvent> = synchronized(buffer) {
@@ -39,5 +40,7 @@ object GrowthDebugSink {
         val label: String,
         val properties: Map<String, Any?>,
         val occurredAtMs: Long = System.currentTimeMillis(),
+        /** True when the SDK is suppressed (disabled / test build): this event was NOT sent. */
+        val suppressed: Boolean = false,
     )
 }

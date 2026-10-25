@@ -9,9 +9,12 @@ import kotlin.coroutines.resumeWithException
  * Fetch the Google Play Install Referrer string and submit it to GTM Easy.
  *
  * Requires the host app to add `com.android.installreferrer:installreferrer:2.2`
- * (or later) to its dependencies; otherwise this returns null.
+ * (or later) to its dependencies; otherwise this returns null. When
+ * [GrowthAnalytics.isSuppressed] it returns a noop response without touching Play services.
  */
 suspend fun GrowthAnalytics.collectPlayInstallReferrer(context: Context): IngestResponse? {
+    // Suppressed (disabled / test build): don't even bind the Play referrer service.
+    if (isSuppressed) return IngestResponse(null, null)
     val referrer = readInstallReferrer(context) ?: return null
     return submitPlayInstallReferrer(referrer)
 }

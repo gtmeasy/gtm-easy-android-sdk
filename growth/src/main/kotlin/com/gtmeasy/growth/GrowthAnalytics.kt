@@ -38,16 +38,41 @@ class GrowthAnalytics @JvmOverloads constructor(
     clickIdStore: GrowthClickIdStore? = null,
     identityStore: IdentityStore? = null,
     systemContext: GrowthSystemContextProvider? = null,
+    buildChannelProbe: GrowthBuildChannelProbe? = null,
 ) {
+    /**
+     * The build channel used for [isSuppressed]: the configured
+     * [GrowthAnalyticsConfiguration.buildChannel] if set, otherwise offline auto-detection
+     * (cached per process).
+     */
+    val resolvedBuildChannel: GrowthBuildChannel by lazy {
+        configuration.buildChannel
+            ?: buildChannelProbe?.let { GrowthBuildChannelDetector.detect(it) }
+            ?: GrowthBuildChannelDetector.detect(configuration.context)
+    }
+
+    /**
+     * True when this instance sends nothing and writes no durable SDK state:
+     * `disabled || (suppressTestBuilds && resolvedBuildChannel in {DEBUG, TESTFLIGHT, INTERNAL_TEST})`.
+     */
+    val isSuppressed: Boolean = GrowthBuildChannelDetector.isSuppressed(
+        configuration.disabled, configuration.suppressTestBuilds,
+    ) { resolvedBuildChannel }
+
     private val http: GrowthHttpClient = httpClient ?: UrlConnectionHttpClient(configuration.timeoutMs)
-    private val anonStore: AnonymousIdStore = anonymousIdStore ?: configuration.context
-        ?.let { SharedPrefsAnonymousIdStore(it) }
-        ?: InMemoryAnonymousIdStore()
+    private val anonStore: AnonymousIdStore = when {
+        // Suppressed: reuse an existing id, never create/persist one.
+        isSuppressed -> MemoryOnlyAnonymousIdStore {
+            anonymousIdStore?.get() ?: configuration.context?.let { peekPersistedAnonymousId(it) }
+        }
+        anonymousIdStore != null -> anonymousIdStore
+        else -> configuration.context?.let { SharedPrefsAnonymousIdStore(it) } ?: InMemoryAnonymousIdStore()
+    }
     private val deviceIds: GrowthDeviceIdentifiers = deviceIdentifiers ?: GrowthDeviceIdentifiers(configuration.context)
-    private val clickIds: GrowthClickIdStore = clickIdStore ?: GrowthClickIdStore(configuration.context)
-    private val identityStore: IdentityStore = identityStore ?: configuration.context
+    private val clickIds: GrowthClickIdStore = clickIdStore ?: GrowthClickIdStore(configuration.context, memoryOnly = isSuppressed)
+    private val identityStore: IdentityStore = (identityStore ?: configuration.context
         ?.let { SharedPrefsIdentityStore(it) }
-        ?: InMemoryIdentityStore()
+        ?: InMemoryIdentityStore()).let { if (isSuppressed) MemoryOverlayIdentityStore(it) else it }
     private val systemContext: GrowthSystemContextProvider = systemContext ?: LiveGrowthSystemContextProvider
     private val mutex = Mutex()
     private val json = Json { encodeDefaults = false; explicitNulls = false }
@@ -60,6 +85,14 @@ class GrowthAnalytics @JvmOverloads constructor(
     @Volatile private var email: String? = this.identityStore.get(IdentityStore.KEY_EMAIL)
 
     val bridges: MutableList<GrowthBridge> = CopyOnWriteArrayList()
+
+    init {
+        if (isSuppressed) {
+            // One line, never the write key.
+            val reason = if (configuration.disabled) "disabled" else "channel=${resolvedBuildChannel.wire}"
+            runCatching { android.util.Log.i(LOG_TAG, "GTM Easy: suppressing events ($reason)") }
+        }
+    }
 
     /** Force-set the userId without emitting an identify event. Persisted durably. */
     fun setUserId(id: String?) {
@@ -116,7 +149,6 @@ class GrowthAnalytics @JvmOverloads constructor(
         username: String? = null,
         email: String? = null,
     ): IngestResponse {
-        if (configuration.disabled) return IngestResponse(null, null)
         // Mutate + snapshot identity AND the anon id under one lock so the values
         // we send (and link) can't be torn by a concurrent reset()/track().
         val snap = mutex.withLock {
@@ -127,6 +159,11 @@ class GrowthAnalytics @JvmOverloads constructor(
             identityStore.set(IdentityStore.KEY_USERNAME, this.username)
             identityStore.set(IdentityStore.KEY_EMAIL, this.email)
             IdentitySnapshot(this.userId, this.username, this.email, anonStore.get())
+        }
+        if (isSuppressed) {
+            // Identity updated in memory only (store is memory-only); no context, bridges or network.
+            mirrorSuppressed(GrowthDebugSink.Kind.IDENTIFY, snap.userId ?: snap.username ?: snap.email ?: "<anonymous>", traits)
+            return IngestResponse(null, null)
         }
         val enrichedTraits = traits + mapOf("_ctx" to commonContext())
         val body = buildJsonObject {
@@ -159,7 +196,10 @@ class GrowthAnalytics @JvmOverloads constructor(
         metricValue: Double? = null,
         metricLabel: String? = null,
     ): IngestResponse {
-        if (configuration.disabled) return IngestResponse(null, null)
+        if (isSuppressed) {
+            mirrorSuppressed(GrowthDebugSink.Kind.TRACK, eventName, properties)
+            return IngestResponse(null, null)
+        }
         val enrichedProperties = properties + mapOf("_ctx" to commonContext())
         // Snapshot userId + anon id atomically under the same lock identify()/reset()
         // use, so a concurrent reset() can't pair a cleared user with the old anon id
@@ -205,7 +245,14 @@ class GrowthAnalytics @JvmOverloads constructor(
     }
 
     companion object {
-        const val SDK_VERSION = "0.8.0"
+        const val SDK_VERSION = "0.9.0"
+        private const val LOG_TAG = "GrowthAnalytics"
+    }
+
+    /** Debug-sink mirror for a suppressed call: event name + caller properties only, no context. */
+    private fun mirrorSuppressed(kind: GrowthDebugSink.Kind, label: String, properties: Map<String, Any?>) {
+        if (!configuration.debug) return
+        GrowthDebugSink.record(GrowthDebugSink.DebugEvent(kind, label, properties, suppressed = true))
     }
 
     suspend fun trackFirstOpen() = track("app.first_open")
@@ -254,7 +301,10 @@ class GrowthAnalytics @JvmOverloads constructor(
      * resolves UTM and campaign metadata and stores the parsed result.
      */
     suspend fun submitPlayInstallReferrer(referrer: String): IngestResponse {
-        if (configuration.disabled) return IngestResponse(null, null)
+        if (isSuppressed) {
+            mirrorSuppressed(GrowthDebugSink.Kind.ATTRIBUTION, "play_install_referrer", emptyMap())
+            return IngestResponse(null, null)
+        }
         val (snapUserId, snapAnon) = mutex.withLock { userId to anonStore.get() }
         val body = buildJsonObject {
             put("app", JsonPrimitive(configuration.app))
@@ -289,9 +339,10 @@ class GrowthAnalytics @JvmOverloads constructor(
         properties: Map<String, Any?> = emptyMap(),
         metadata: Map<String, Any?> = emptyMap(),
     ): SurveySubmitResponse {
-        if (configuration.disabled) return SurveySubmitResponse(
-            submissionId ?: UUID.randomUUID().toString().lowercase(), 0, emptyList()
-        )
+        if (isSuppressed) {
+            mirrorSuppressed(GrowthDebugSink.Kind.TRACK, "survey:$surveyId", mapOf("status" to status.wire))
+            return SurveySubmitResponse(submissionId ?: UUID.randomUUID().toString().lowercase(), 0, emptyList())
+        }
         // Generate the idempotency key on-device so a transparent retry reuses it
         // and the server dedups, instead of minting a fresh UUID per attempt.
         val resolvedSubmissionId = submissionId ?: UUID.randomUUID().toString().lowercase()

@@ -84,28 +84,15 @@ class GrowthLifecycleObserver @JvmOverloads constructor(
      * (signed-in, has local data), to avoid counting them as new installs.
      */
     fun markInstalledBeforeTracking() {
+        // Suppressed (disabled / test build): never write install state, so a later
+        // production build on this device still classifies its own launch.
+        if (analytics.isSuppressed) return
         installState.markInstalledBeforeTracking(appVersion(), buildNumber())
     }
 
     private suspend fun resolveAndFireLaunch() {
         try {
-            val version = appVersion()
-            val build = buildNumber()
-            // The OS signal is only relevant on the first SDK run; skip it (and the
-            // PackageManager call) once we've already classified this install.
-            val signal = if (installState.firstOpenFired) {
-                GrowthInstallSignal.UNKNOWN
-            } else {
-                installSignalProvider.priorInstallSignal()
-            }
-            val launch = installState.resolveLaunch(
-                currentVersion = version,
-                currentBuild = build,
-                signal = signal,
-                isProduction = analytics.environment == GrowthAnalyticsConfiguration.Environment.PRODUCTION,
-                trackBuildChanges = trackBuildChanges,
-            )
-            fireLaunch(analytics, launch, version, build) { installState.persistBaseline(version, build) }
+            classifyAndFireLaunch(analytics, installState, installSignalProvider, trackBuildChanges, ::appVersion, ::buildNumber)
         } finally {
             launchResolved.complete(Unit)
         }
@@ -161,6 +148,40 @@ class GrowthLifecycleObserver @JvmOverloads constructor(
         internal fun isMainProcessName(processName: String?, mainProcessName: String): Boolean =
             processName == null || processName == mainProcessName
     }
+}
+
+/**
+ * Classify this launch and fire its event. Returns before the install-signal probe,
+ * [GrowthInstallState.resolveLaunch] (which persists first-open / baseline) and
+ * [GrowthInstallState.persistBaseline] when [analytics] is suppressed. Context-free so
+ * the suppressed → production relaunch path is unit-testable with an in-memory store.
+ */
+internal suspend fun classifyAndFireLaunch(
+    analytics: GrowthAnalytics,
+    installState: GrowthInstallState,
+    installSignalProvider: InstallSignalProvider,
+    trackBuildChanges: Boolean,
+    appVersion: () -> String?,
+    buildNumber: () -> String?,
+) {
+    if (analytics.isSuppressed) return
+    val version = appVersion()
+    val build = buildNumber()
+    // The OS signal is only relevant on the first SDK run; skip it (and the
+    // PackageManager call) once we've already classified this install.
+    val signal = if (installState.firstOpenFired) {
+        GrowthInstallSignal.UNKNOWN
+    } else {
+        installSignalProvider.priorInstallSignal()
+    }
+    val launch = installState.resolveLaunch(
+        currentVersion = version,
+        currentBuild = build,
+        signal = signal,
+        isProduction = analytics.environment == GrowthAnalyticsConfiguration.Environment.PRODUCTION,
+        trackBuildChanges = trackBuildChanges,
+    )
+    fireLaunch(analytics, launch, version, build) { installState.persistBaseline(version, build) }
 }
 
 /**

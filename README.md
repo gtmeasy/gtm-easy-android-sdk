@@ -5,7 +5,41 @@ First-party Kotlin SDK for [GTM Easy](https://gtmeasy.com) growth analytics, nat
 Targets: **Android 6.0 (API 23)+** and **JVM 11+** for backend / server use.
 
 ```kotlin
-implementation("com.gtmeasy:growth:0.8.0")
+implementation("com.gtmeasy:growth:0.9.0")
+```
+
+## What's new (v0.9.0)
+
+- **Suppress test builds.** `GrowthAnalyticsConfiguration(suppressTestBuilds = true)` drops every
+  event from debug and internal test builds — no network on any path (identify, track, surveys,
+  Play Install Referrer) and **no durable SDK state written** (install / first-open state,
+  version baseline, identity, click ids; an existing anonymous id is reused, otherwise an
+  in-memory one is used). A test build later replaced by the Play build on the same device
+  therefore still sends `app.first_open` for the real install. Default is `false`.
+- **Build channel.** `GrowthBuildChannel` = `DEBUG | TESTFLIGHT | INTERNAL_TEST | PRODUCTION | UNKNOWN`,
+  detected offline once per process: `FLAG_DEBUGGABLE` → `DEBUG`; installer
+  `dev.firebase.appdistribution` → `INTERNAL_TEST`; installer `com.android.vending` →
+  `PRODUCTION`; anything else (sideload, other stores, JVM / no `Context`) → `UNKNOWN`.
+  `UNKNOWN` is **never** suppressed. Play internal/closed testing can't be told apart
+  on-device, so test flavors pass `buildChannel` explicitly (a non-null override always wins).
+- **Read-only state:** `analytics.isSuppressed` and `analytics.resolvedBuildChannel`.
+  Rule: `disabled || (suppressTestBuilds && channel in {DEBUG, TESTFLIGHT, INTERNAL_TEST})`.
+- **`disabled` fixed:** it now gets the same no-durable-writes guarantees —
+  `GrowthLifecycleObserver` no longer persists first-open / baseline state and
+  `markInstalledBeforeTracking()` is a no-op while disabled.
+- With `debug = true`, suppressed calls are still mirrored to `GrowthDebugSink` with
+  `DebugEvent.suppressed == true` (event name + your properties only, no `_ctx`). One
+  `GTM Easy: suppressing events (channel=debug)` line is logged at init.
+
+```kotlin
+GrowthAnalyticsConfiguration(
+    app = "<gtm-easy-app-id>",
+    writeKey = "<per-app-write-key>",
+    context = applicationContext,
+    suppressTestBuilds = true,
+    // Optional: for a dedicated test flavor distributed via Play internal testing.
+    // buildChannel = if (BuildConfig.FLAVOR == "internal") GrowthBuildChannel.INTERNAL_TEST else null,
+)
 ```
 
 ## What's new (v0.8.0)
